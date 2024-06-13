@@ -1480,3 +1480,115 @@ Una ves definidos todos estos objetos en archivos de configuración YAML, podemo
 ```bash
 kubectl apply -f ./
 ```
+
+## Gestión de repositorios y control de versiones con Git
+
+Git es un sistema de control de versiones distribuido, opensource y se puede integrar con diferentes repositorios, puede usarse para controlar versiones de código, instalables, documentos, etc. Git se integra con diferentes repositorios centralizados como GitHub, GitLab, Bitbucket, etc.
+
+Es común que cuando ser trabaja en equipo usando Git ocurran conflictos en los que se solapan cambios en el mismo archivo, para resolver este tipo de conflictos se suelen usar metodologías Git Flow o Git Trunk based para solventar este tipo de problemas.
+
+### Git Flow vs Git Trunk based
+
+Conceptos importantes:
+
+- **Trunk**: Es la linea principal de desarrollo.
+- **Branch**: Una nueva bifurcación del estado actual del código que crea una nueva ruta para evolucionar el código.
+- **Fork**: Duplicar el repositorio y su historial de cambios.
+- **Tag**: Etiquetas para identificar versiones del código en un momento dado (snapshot) es como moverse a una rama, pero sin poder modificar ni hacer commit, a menos que se cree una rama a partir de el tag.
+
+#### Git Trunk based
+
+Una única rama master de la cual parten los desarrolladores y crean ramas para sus características, cuando su rama está completa y ha sido probada se envía un MR a la rama principal (trunk/master).
+
+1. Crea una rama de ciclo de vida corto partiendo del trunk/master.
+2. Se realizan cambios en esta nueva rama y se agregan los commits. Se debe probar de manera exhaustiva localmente y en el servidor de integración continua.
+3. Cuando esté listo para hacer merge, se debe actualizar la rama con los cambios de la rama principal para evita conflictos y agilizar el proceso.
+4. Se debe hacer el Merge request de esta rama a la rama principal.
+
+#### Git Flow
+
+Es una metodología de flujo de trabajo aplicado a un repositorio de Git.
+
+1. **Master**: Almacena ek historial de versiones oficiales, nunca recibe código directo.
+2. **develop**: Funciona como rama de integración de las features, nunca recibe código directo.
+3. **Features**: Parten de develop, son temporales, es aquí donde los desarrolladores agregan el código de nuevas características (feature/myFeature).
+4. **Release**: Parten de develop, preparación de la release, se despliega en entorno de pruebas, se hacen ajustes y se integra en master y develop (release-x.y.z).
+5. **Hotfix**: Parten de máster, para arreglar errores urgentes, se integran en master y dev y se marca la versión con un tag (hotfix-x.y.z).
+
+Cuando usar Git Flow:
+
+- Ideal para proyectos opensource.
+- Cuando el número de desarrolladores junior es alto.
+- Si el indice de rotación del equipo es alto.
+- Cuando ya se cuenta con un producto establecido (en producción).
+- Calendarios de releases fijo.
+
+Cuando usar Git Trunk based:
+
+- Es un practica requerida para la integración continua.
+- Cuando se está iniciando un proyecto.
+- Cuando se quiere iterar rápido
+-  Cundo el equipo de desarrollo principalmente está integrado por seniors.
+- Cuando se trabaja con enfoque TDD.
+
+### Trunked based con Git
+
+Para trabajar con Git Trunk based necesitamos tener una rama principal (trunk/master) y crear ramas para las características, por ejemplo:
+
+```bash
+git checkout -b feature/myFeature
+```
+
+Con este comando creamos una rama para una nueva característica. Luego podemos hacer cambios en esta rama y agregarlos al repositorio con los siguientes comandos:
+
+```bash
+git add .
+git commit -m "Mensaje del commit"
+```
+
+Con estos comandos agregamos los cambios al repositorio y los guardamos en la rama. Luego podemos enviar la rama al repositorio con el siguiente comando:
+
+```bash
+git push origin feature/myFeature
+```
+
+Con este comando enviamos la rama al repositorio remoto. Luego podemos hacer un Merge Request para enviar la rama a la rama principal (trunk/master). Para hacer un Merge Request necesitamos ir al repositorio en GitHub, GitLab, Bitbucket, etc., y hacer clic en el botón de Merge Request.
+
+Es importante recordar que antes de enviar la rama al repositorio remoto debemos actualizar la rama con los cambios de la rama principal para evitar conflictos y agilizar el proceso. Esto lo podemos hacer con el siguiente comando:
+
+```bash
+git pull origin trunk/master
+```
+
+Con este comando traemos a la rama los posibles cambios que pueden haber sido agregados a la rama principal mientras estábamos trabajando en nuestra rama.
+
+### Git Flow con Git
+
+Para trabajar con Git Flow necesitamos tener una rama principal (master) y una rama de desarrollo (develop), y crear ramas para las características, por ejemplo:
+
+deberíamos comenzar moviéndonos a la rama develop:
+
+```bash
+git checkout develop
+```
+
+A partir de esta rama creamos una nueva para agregar lo cambios de nuestra feature:
+
+```bash
+git checkout -b feature/myFeature
+```
+
+Con este comando creamos una rama para una nueva característica. Luego podemos hacer cambios en esta rama y agregarlos al repositorio con los siguientes comandos:
+
+```bash
+git add .
+git commit -m "Mensaje del commit"
+```
+
+Con estos comandos agregamos los cambios al repositorio y los guardamos en la rama. Luego podemos enviar la rama al repositorio con el siguiente comando:
+
+```bash
+git push origin feature/myFeature
+```
+
+Con este comando enviamos la rama al repositorio remoto. Luego podemos hacer un Merge Request para enviar la rama a la rama de desarrollo (develop). Para hacer un Merge Request necesitamos ir al repositorio en GitHub, GitLab, Bitbucket, etc., y hacer clic en el botón de Merge Request.
