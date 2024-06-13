@@ -567,5 +567,330 @@ services:
 
 En donde podemos configurar también parámetros de despliegue como limites para el consumo de cpu y memoria, ademas de limitar la reserva que el contenedor puede hacer.
 
-## Docker Swarm
+### Entornos virtuales
 
+Una practica común en DevOps es manejar diferentes entornos virtuales para una aplicación, en un solo Host podemos tener entornos de desarrollo, pruebas y producción. Esto lo podemos conseguir mediante la segmentación de redes, docker nos permite manejar diferentes segmentos de red para cada entorno, un usuario puede diferenciar esto según el puerto que se exponga, por ejemplo, el puerto 80 para producción y el puerto 81 para preproducción.
+
+Por ejemplo en un escenario en donde tenemos dos entornos, producción y preproducción en donde:
+
+- Producción:
+  - JRE: Java 18
+  - Web server: Nginx 1.19
+  - Base de datos: PostgreSQL 13.1, puerto 5432
+  - Frontend: Angular 12, localhost:80
+  - Backend: Java 18, localhost:8080
+  - 172.16.235.0/24
+- Preproducción
+  - JRE: Java 18
+  - Web server: Nginx 1.19
+  - Base de datos: PostgreSQL 13.1, puerto 4432
+  - Frontend: Angular 12, localhost:81
+  - Backend: Java 18, localhost:7080
+  - 172.16.232.0/24
+
+Para configurar estos entornos debemos hacer algunas modificaciones en el archivo de Docker Compose, por ejemplo:
+
+```yaml
+version: '3.1'
+
+services:
+#database engine service
+  postgres_db_prod:
+    container_name: postgres_prod
+    image: postgres:latest
+    restart: always
+    networks:
+     - env_prod
+    ports:
+      - 5432:5432
+    volumes:
+        #allow *.sql, *.sql.gz, or *.sh and is execute only if data directory is empty
+      - ./dbfiles:/docker-entrypoint-initdb.d
+      - /var/lib/postgres_data_prod:/var/lib/postgresql/data
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: qwerty
+      POSTGRES_DB: postgres    
+
+
+  postgres_db_prep:
+    container_name: postgres_prep
+    image: postgres:latest
+    restart: always
+    networks:
+     - env_prep
+    ports:
+      - 4432:5432
+    volumes:
+        #allow *.sql, *.sql.gz, or *.sh and is execute only if data directory is empty
+      - ./dbfiles:/docker-entrypoint-initdb.d
+      - /var/lib/postgres_data_prep:/var/lib/postgresql/data
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: qwerty
+      POSTGRES_DB: postgres    
+
+#database admin service
+  adminer:
+    container_name: adminer
+    image: adminer
+    restart: always
+    depends_on: 
+      - postgres_db_prod
+      - postgres_db_prep
+    networks:
+     - env_prod
+     - env_prep
+    ports:
+       - 9090:8080
+
+
+#Billin app backend service
+  billingapp-back-prod:
+    build:
+      context: ./java
+      args:
+        - JAR_FILE=billing-0.0.3-SNAPSHOT.jar
+    container_name: billingApp-back-prod     
+    environment:
+       - JAVA_OPTS=
+         -Xms256M 
+         -Xmx256M         
+    depends_on:     
+      - postgres_db_prod
+    networks:
+     - env_prod
+    ports:
+      - 8080:8080 
+
+#Billin app backend service
+  billingapp-back-prep:
+    build:
+      context: ./java
+      args:
+        - JAR_FILE=billing-0.0.2-SNAPSHOT.jar
+    container_name: billingApp-back-prep      
+    environment:
+       - JAVA_OPTS=
+         -Xms256M 
+         -Xmx256M         
+    depends_on:     
+      - postgres_db_prep
+    networks:
+     - env_prep
+    ports:
+      - 7080:7080 
+
+#Billin app frontend service
+  billingapp-front-prod:
+    build:
+      context: ./angular 
+    deploy:   
+        resources:
+           limits: 
+              cpus: "0.15"
+              memory: 250M
+#recusos dedicados, mantiene los recursos disponibles del host para el contenedor
+           reservations:
+              cpus: "0.1"
+              memory: 128M
+    #container_name: billingApp-front
+    depends_on:     
+      -  billingapp-back-prod
+#rango de puertos para escalar   
+    networks:
+     - env_prod 
+    ports:
+      - 80:80 
+
+
+#Billin app frontend service
+  billingapp-front-prep:
+    build:
+      context: ./angular 
+    deploy:   
+        resources:
+           limits: 
+              cpus: "0.15"
+              memory: 250M
+#recusos dedicados, mantiene los recursos disponibles del host para el contenedor
+           reservations:
+              cpus: "0.1"
+              memory: 128M
+    #container_name: billingApp-front
+    depends_on:     
+      - billingapp-back-prep
+#rango de puertos para escalar   
+    networks:
+     - env_prep 
+    ports:
+      - 81:81
+
+networks:
+  env_prod:
+    driver: bridge  
+    #activate ipv6
+    driver_opts: 
+            com.docker.network.enable_ipv6: "true"
+    #IP Adress Manager
+    ipam: 
+        driver: default
+        config:
+        - 
+          subnet: 172.16.232.0/24
+          gateway: 172.16.232.1
+        - 
+          subnet: "2001:3974:3979::/64"
+          gateway: "2001:3974:3979::1"
+
+
+  env_prep:   
+    driver: bridge  
+    #activate ipv6
+    driver_opts: 
+            com.docker.network.enable_ipv6: "true"
+    #IP Adress Manager
+    ipam:
+        driver: default
+        config:
+        - 
+          subnet: 172.16.235.0/24
+          gateway: 172.16.235.1
+        - 
+          subnet: "2001:3984:3989::/64"
+          gateway: "2001:3984:3989::1"
+```
+
+En donde agregamos configuraciones nuevas como las redes `env_prod` y `env_prep` en donde se definen las subredes y las puertas de enlace para cada entorno, también se definen los servicios para cada entorno y se les asigna la red correspondiente.
+
+## Docker Swarm
+Docker Swarm es una herramienta de orquestación de contenedores que permite administrar un clúster de contenedores de Docker. Es en cierto sentido un intermedio entre docker compose y Kubernetes, es más sencillo que Kubernetes pero más potente que Docker Compose.
+
+Kubernetes suele ser usado en entornos empresariales en donde se usa para manejar infraestructura como código, para manejar clusters y para orquestar microservicios, mientras que en entornos de pruebas lo mas común es que se trabaje con compose, sin embargo, también se puede trabajar con Swarm en entornos de pruebas.
+
+A la hora de escoger que orquestador usar debemos considerar varios factores como el tamaño de la empresa, el presupuesto y la cantidad de contenedores, par soluciones pequeñas basta con compose, para una en donde se tengan que manejar mas de una máquina porque se administran varios servidores en un cluster y tenemos diferentes replicas de los servicios, tolerancia a fallos y alta disponibilidad pero el entorno sigue siendo pequeño, lo mejor es usar Swarm, para entornos mas grandes y complejos lo mejor es usar Kubernetes.
+
+Para activar Docker Swarm se ejecuta el siguiente comando:
+
+```bash
+docker swarm init
+```
+
+Esto inicia un clúster de Docker Swarm y nos deja como el nodo líder del clúster.
+
+Para obtener info sobre si docker swarm esta activo podemos ejecutar el comando:
+
+```bash
+docker info
+```
+
+En donde nos mostrara si está activo o no. Ademas nos muestra información relevante como la dirección IP de nuestro nodo, esto es relevante ya que si necesitamos probar luego nuestra aplicación debemos usar esta dirección ya que localhost no funcionara.
+
+### Escalar contenedores con Swarm y definir parámetros de la orquestación
+
+Para trabajar con Docker Swarm podemos usar el mismo archivo yaml que usábamos con compose, la diferencia es que con Swarm podemos agregar parámetros de orquestación, por ejemplo, escalar en numero de replicas de un servicio.
+
+```yaml
+version: '3.1'
+
+services:
+#database engine service
+  postgres_db:
+    #container_name: postgres
+    image: postgres:latest
+    restart: always
+    ports:
+      - 5432:5432
+    volumes:
+        #allow *.sql, *.sql.gz, or *.sh and is execute only if data directory is empty
+      - ./dbfiles:/docker-entrypoint-initdb.d
+      - /var/lib/postgres_data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: qwerty
+      POSTGRES_DB: postgres    
+#database admin service
+  adminer:
+    #container_name: adminer
+    image: adminer
+    restart: always
+    depends_on: 
+      - postgres_db
+    ports:
+       - 9090:8080
+
+
+#Billin app backend service
+  billingapp-back:
+    build:
+      context: ./java
+      args:
+        - JAR_FILE=*.jar
+    image: billingapp_v2_billingapp-back:latest
+    #container_name: billingApp-back      
+    environment:
+       - JAVA_OPTS=
+         -Xms256M 
+         -Xmx256M         
+    depends_on:     
+      - postgres_db
+    ports:
+      - 8080:8080 
+
+
+#Billin app frontend service
+  billingapp-front:
+    build:
+      context: ./angular
+    image: billingapp_v2_billingapp-front 
+    deploy: 
+        replicas: 3
+        resources:
+           limits: 
+              cpus: "0.15"
+              memory: 250M
+#recusos dedicados, mantiene los recursos disponibles del host para el contenedor
+           reservations:
+              cpus: "0.1"
+              memory: 128M
+    #container_name: billingApp-front
+    depends_on:     
+      - billingapp-back
+#rango de puertos para escalar    
+    ports:
+      - 80-85:80 
+```
+
+En este archivo se define un servicio de frontend con 3 replicas, esto significa que se van a crear 3 contenedores con el servicio de frontend. Por lo general se definen mas replicas para servicios que se espera que tengan una alta demanda, como el frontend de una aplicación web. También con docker swarm es obligatorio que definamos la imagen que va a usar un contenedor.
+
+En Docker Swarm las orquestaciones se conocen como `stack`, es por eso que cambia un poco el comando de despliegue.
+
+```bash
+docker stack deploy -c stack-billing.yml billing
+```
+
+Con esto se despliega la aplicación en el clúster de Docker Swarm.
+
+Para listar los servicios que se están ejecutando en el clúster se ejecuta el siguiente comando:
+
+```bash
+docker service ls
+```
+
+Este comando nos mostrará una lista de los servicios que se están ejecutando en el clúster, con información como el nombre del servicio, el número de replicas, el estado, etc.
+
+Para desactivar Docker Swarm se ejecuta el siguiente comando:
+
+```bash
+docker swarm leave --force
+```
+
+Con esto se desactiva el clúster de Docker Swarm y se vuelve al modo de ejecución normal de Docker.
+
+También si queremos podemos eliminar el clúster con el siguiente comando:
+
+```bash
+docker stack rm billing
+```
+
+## Kubernetes
