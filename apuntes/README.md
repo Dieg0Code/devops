@@ -250,3 +250,322 @@ Podemos subir esta imagen a Docker Hub si queremos de la siguiente manera:
 
 ```bash
 docker tag billingapp nombre_usuario/billingapp
+docker push nombre_usuario/billingapp
+```
+
+Con usar Docker le estamos ahorrando al equipo de infraestructura todas las configuraciones necesarias para que la aplicación pueda ejecutarse en el servidor, como instalaciones de Java, Nginx, configuraciones de puertos, etc. Todo esto ya viene empaquetado en el contenedor de Docker.
+
+## Docker Compose
+
+En la aplicación que venimos trabajando empaquetamos tanto el frontend como el backend en un solo contenedor, pero lo normal es que cada servicio este separado en un contenedor propio, lo normal en esta aplicación sería tener un contenedor para el frontend, otro para el microservicio de Java, otro para la base de datos y otro para el DBMS o interfaz gráfica para administrar la base de datos.
+
+Es en estos escenarios en donde una aplicación consta de varias partes en donde entran en juego los orquestados, estos son herramientas que nos permiten definir y ejecutar aplicaciones Docker multi-contenedor en donde los diferentes contenedores se comunican entre sí. Docker Compose es una de estas herramientas.
+
+Los archivos de Docker Compose son archivos YAML que definen los servicios, las redes y los volúmenes de una aplicación multi-contenedor. Por ejemplo, el archivo `stack-billing.yml` para la aplicación que venimos trabajando sería algo así:
+
+```yaml
+version: '3.8'
+
+services:
+# database engine service
+  postgres_db:
+    container_name: postgres
+    image: postgres:13
+    restart: always
+    ports:
+      - 5432:5432
+    volumes:
+      - ./dbfiles:/docker-entrypoint-initdb.d
+      - ./postgres_data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+# Adminer service
+  adminer:
+    container_name: adminer
+    image: adminer
+    restart: always
+    depends_on:
+      - postgres_db
+    ports:
+      - 9090:8080
+```
+
+En este archivo se definen dos servicios, uno para la base de datos PostgreSQL y otro para la interfaz gráfica de administración de la base de datos Adminer. Se definen los puertos, los volúmenes y las variables de entorno necesarias para cada servicio.
+
+En `volume` se definen los volúmenes que se van a montar en el contenedor, en este caso se monta un volumen con los archivos de inicialización de la base de datos y otro con los datos de la base de datos.
+
+```bash
+#!/bin/bash
+set -e
+
+psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-EOSQL
+    CREATE USER billingapp WITH PASSWORD 'qwerty';
+    ALTER USER billingapp WITH SUPERUSER;
+    CREATE DATABASE billingapp_db;
+    GRANT ALL PRIVILEGES ON DATABASE billingapp_db TO billingapp;
+    GRANT ALL ON SCHEMA public TO billingapp;
+EOSQL
+```
+
+Este archivo se monta en el contenedor de la base de datos y se ejecuta al iniciar el contenedor, en este caso se crea un usuario y una base de datos para la aplicación.
+
+Para ejecutar los servicios definidos en el archivo `stack-billing.yml` se ejecuta el siguiente comando:
+
+```bash
+docker compose -f stack-billing.yml up -d
+```
+
+En donde `-f` se usa para especificar el archivo de Docker Compose y `-d` se usa para ejecutar los servicios en segundo plano.
+
+### Volúmenes en Docker y puertos
+
+Los volúmenes en Docker son una forma de persistir los datos de un contenedor en el host. Los volúmenes son directorios que se montan en el contenedor y que permiten que los datos persistan incluso si el contenedor se elimina. Podemos montar un volumen en un contenedor con el comando `-v` de Docker. Por ejemplo, si queremos montar el directorio `/datos` del host en el directorio `/datos` del contenedor, podemos hacerlo con el siguiente comando:
+
+```bash
+docker run -v /datos:/datos nombre_imagen
+```
+
+Si es que queremos eliminar un contenedor que maneja la base de datos no nos interesa perder todos los datos que este contenedor tenía, es por eso que lo volúmenes se deben guardar en un directorio del host para que estos datos persistan. Un volumen es a fines prácticos es almacenamiento estático para los contenedores, se suelen usar para bases de datos, para logs, para montar archivos de configuración, etc.
+
+Ejemplo:
+
+- `Local filesystem path` `:` `container mount path`.
+- `var/lib/postgresql/data:/var/lib/postgresql/data`: En este caso se monta el directorio `/var/lib/postgresql/data` del host en el directorio `/var/lib/postgresql/data` del contenedor.
+- `/home/bds/postgres:/var/lib/postgresql/data`: En este caso se monta el directorio `/home/bds/postgres` del host en el directorio `/var/lib/postgresql/data` del contenedor.
+
+
+Los puertos en Docker son una forma de exponer los servicios de un contenedor al exterior. Los puertos se pueden mapear con el comando `-p` de Docker. Por ejemplo, si queremos mapear el puerto 80 del contenedor al puerto 8080 del host, podemos hacerlo con el siguiente comando:
+
+```bash
+docker run -p 8080:80 nombre_imagen
+```
+
+De esta manera, si accedemos a `http://localhost:8080` en el host, estaremos accediendo al puerto 80 del contenedor.
+
+### Separar los contenedores
+
+Para separar los contenedores debemos escribir un archivo `Dockerfile` para cada servicio, por ejemplo, para el frontend:
+
+```Dockerfile
+FROM nginx:stable-alpine
+
+VOLUME /tmp
+
+RUN rm -rf /usr/share/nginx/html/*
+
+COPY nginx.conf /etc/nginx/nginx.conf
+COPY billingApp /usr/share/nginx/html
+COPY mime.types /etc/nginx/mime.types
+
+EXPOSE 80
+
+CMD ["nginx", "-g", "daemon off;"]
+```
+
+Y para el microservicio de Java:
+
+```Dockerfile
+# Usa una imagen base con JRE 17 en Alpine
+FROM eclipse-temurin:17-alpine
+
+# Create a new group with specific uid and non-root user called "admin"
+# Be sure that group id are not present on host. if already exist change by arbitrary other uid
+RUN addgroup -g 1028 devopsc \
+    && adduser -D -G devopsc admin
+
+# Create a new mount point at /tmp on native host because a volume is more efficient and faster than filesystem
+VOLUME /tmp
+
+# Copiamos el jar a la imagen
+ARG JAR_FILE
+# Establece una variable de entorno para la contraseña de la base de datos
+ARG DB_PASSWORD
+
+# Establece la variable de entorno DB_PASSWORD con el valor del argumento
+ENV DB_PASSWORD=$DB_PASSWORD
+
+# Copia el archivo JAR
+COPY ${JAR_FILE} /tmp/app.jar
+
+# Change ownership of the /app directory to the "admin" user
+RUN chown -R admin:devopsc /tmp
+
+# Cambia al usuario 'admin'
+USER admin
+
+# Ejecutamos el jar al iniciar el contenedor
+ENTRYPOINT ["java","-jar","/tmp/app.jar"]
+```
+
+Ahora debemos actualizar el archivo de Docker Compose para que use estos nuevos `Dockerfile`:
+
+```yaml
+version: '3.8'
+
+services:
+# database engine service
+  postgres_db:
+    container_name: postgres
+    image: postgres:13
+    restart: always
+    ports:
+      - 5432:5432
+    volumes:
+      - ./dbfiles:/docker-entrypoint-initdb.d
+      - ./postgres_data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: qwerty
+      POSTGRES_DB: postgres
+# Adminer service
+  adminer:
+    container_name: adminer
+    image: adminer
+    restart: always
+    depends_on:
+      - postgres_db
+    ports:
+      - 9090:8080
+
+# Billing app backend service
+  billingapp-back:
+    build:
+      context: ./java
+      args:
+        - JAR_FILE=*.jar
+        - DB_PASSWORD=qwerty
+    container_name: billingApp-back
+    environment:
+      - JAVA_OPTS=
+        - Xms=256m
+        - Xmx=256m
+    depends_on:
+      - postgres_db
+    ports:
+      - 8080:8080
+
+# Billing app frontend service
+  billingapp-front:
+    build:
+      context: ./angular
+    container_name: billingApp-front
+    depends_on:
+      - billingapp-back
+    ports:
+      - 80:80
+```
+
+Con esto definimos los 4 servicios de la aplicación, la base de datos, la interfaz gráfica de administración de la base de datos, el frontend y el backend. Se definen los puertos, los volúmenes y las variables de entorno necesarias para cada servicio.
+
+Para ejecutar los servicios definidos en el archivo `stack-billing.yml` se ejecuta el siguiente comando:
+
+```bash
+docker compose -f stack-billing.yml up -d
+```
+
+Con esto tenemos una aplicación multi-contenedor en la que cada servicio está separado en un contenedor propio.
+
+### Como conectarse a un contenedor por SSH
+
+Podemos conectarnos a un contenedor podemos ejecutar el siguiente comando:
+
+```bash
+docker exec -it nombre_contenedor sh
+```
+
+Con esto iniciado una shell en el contenedor con la cual podemos interactuar con el como lo haríamos con cualquier sistema operativo. Esto es útil para revisar logs, ejecutar comandos, instalar paquetes, etc.
+
+### Limitar y monitorizar recursos físicos (RAM, CPU) deL host de los contenedores
+
+Podemos limitar los recursos físicos de los contenedores con los siguientes comandos:
+
+- `--memory`: Limita la cantidad de memoria RAM que puede usar el contenedor.
+- `--cpus`: Limita la cantidad de CPUs que puede usar el contenedor.
+
+Por ejemplo, si queremos limitar un contenedor a 1GB de RAM y 1 CPU, podemos hacerlo con el siguiente comando:
+
+```bash
+docker run --memory 1g --cpus 1 nombre_imagen
+```
+
+Para monitorizar los recursos físicos de los contenedores podemos usar herramientas como `docker stats` o `docker top`. Por ejemplo, si queremos ver las estadísticas de los contenedores en ejecución, podemos hacerlo con el siguiente comando:
+
+```bash
+docker stats
+```
+
+Este comando nos mostrará las estadísticas de los contenedores en ejecución, como el uso de CPU, memoria, red y disco.
+
+También podemos configurar eso en el archivo yaml de docker compose:
+
+```yaml
+version: '3.1'
+
+services:
+#database engine service
+  postgres_db:
+    container_name: postgres
+    image: postgres:latest
+    restart: always
+    ports:
+      - 5432:5432
+    volumes:
+        #allow *.sql, *.sql.gz, or *.sh and is execute only if data directory is empty
+      - ./dbfiles:/docker-entrypoint-initdb.d
+      - /var/lib/postgres_data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: qwerty
+      POSTGRES_DB: postgres    
+#database admin service
+  adminer:
+    container_name: adminer
+    image: adminer
+    restart: always
+    depends_on: 
+      - postgres_db
+    ports:
+       - 9090:8080
+#Billin app backend service
+  billingapp-back:
+    build:
+      context: ./java
+      args:
+        - JAR_FILE=*.jar
+        - DB_PASSWORD=qwerty
+    container_name: billingApp-back      
+    environment:
+       - JAVA_OPTS=
+         -Xms256M 
+         -Xmx256M         
+    depends_on:     
+      - postgres_db
+    ports:
+      - 8080:8080 
+#Billin app frontend service
+  billingapp-front:
+    build:
+      context: ./angular 
+    deploy:   
+        resources:
+           limits: 
+              cpus: "0.15"
+              memory: 250M
+#recusos dedicados, mantiene los recursos disponibles del host para el contenedor
+           reservations:
+              cpus: "0.1"
+              memory: 128M
+    container_name: billingApp-front
+    depends_on:     
+      - billingapp-back
+#rango de puertos para escalar    
+    ports:
+      - 80:80 
+```
+
+En donde podemos configurar también parámetros de despliegue como limites para el consumo de cpu y memoria, ademas de limitar la reserva que el contenedor puede hacer.
+
+## Docker Swarm
+

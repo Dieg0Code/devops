@@ -287,5 +287,90 @@ docker volume prune
  ```
  - **Elimina todas las redes que no esten en uso, menos las por defecto (bridge, none,host)**
  ```shell
-docker network prune
+docker network prune ```
  ```
+ ## docker Swarm
+   - **Ver informacion de la instalación de docker:**
+ ```shell
+   docker info
+```
+ - **Inicializar Docker Swarm:**
+ ```shell
+   docker swarm init
+```
+ - **Unirse a un clúster Swarm:**
+ ```shell
+   docker swarm join --token <token>
+```
+ - **Desplegar un servicio:**
+ ```shell
+   docker service create --name <nombre_servicio> <imagen>
+```
+ - **Listar servicios en ejecución:**
+ ```shell
+   docker service ls
+```
+ - **Ver detalles de un servicio:**
+ ```shell
+   docker service inspect <nombre_servicio>
+```
+ - **Escalar un servicio:**
+ ```shell
+   docker service scale <nombre_servicio>=<número_replicas>
+```
+ - **Actualizar un servicio:**
+ ```shell
+   docker service update --image <nueva_imagen> <nombre_servicio>
+```
+ - **Eliminar un servicio:**
+ ```shell
+   docker service rm <nombre_servicio>
+```
+ - **Ver nodos en el clúster:**
+ ```shell
+   docker node ls
+```
+ - **Ver información detallada de un nodo:**
+ ```shell
+    docker node inspect <ID_nodo>
+```
+ - **Quitar un nodo del clúster:**
+ ```shell
+    docker node rm <ID_nodo>
+```
+ - **Pausar un servicio:**
+ ```shell
+    docker service pause <nombre_servicio>
+```
+ - **Reanudar un servicio:**
+ ```shell
+    docker service resume <nombre_servicio>
+```
+ - **Ver logs de un servicio:**
+ ```shell
+    docker service logs <nombre_servicio>
+```
+ - **Ver eventos del clúster:**
+ ```shell
+    docker swarm events
+```
+ - **Obtener token de manager:**
+ ```shell
+    docker swarm join-token manager
+```
+ - **Obtener token de worker:**
+ ```shell
+    docker swarm join-token worker
+```
+ - **Promover un nodo a manager:**
+ ```shell
+    docker node promote <ID_nodo>
+```
+ - **Despromover un nodo a worker:**
+ ```shell
+    docker node demote <ID_nodo>
+```
+ - **Actualizar la clave de autenticación del manager:**
+ ```shell
+    docker swarm update --autolock=true
+```
