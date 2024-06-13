@@ -1061,3 +1061,422 @@ minikube service --url nombre_pod
 ```
 
 Nos va a devolver una url que podemos pegar en el navegador para acceder al servicio.
+
+### Comandos DevOps Jenkins
+
+1. Consultar la version del apiserver
+
+```bash	
+kubectl api-versions
+```
+
+2. Codificar un parametro
+
+```bash
+echo -n 'qwerty' | base64
+```
+
+3. Descodificar un parametro
+
+```bash
+echo "cXdlcnR5" | base64 -d
+```
+
+4. Comandos necesario para apuntar el docker engine local hacia el registro de minikube
+
+```bash
+minikube docker-env
+```
+
+```bash
+eval $(minikube -p minikube docker-env)
+```
+
+5. consultar la ip de minikube
+
+```bash
+minikube ip
+```
+
+### Encriptar variables de entorno sensibles
+
+Para encriptar variables de entorno sensibles en Kubernetes podemos usar `Secrets`, que es un objeto de Kubernetes que nos permite almacenar información sensible, como contraseñas, claves de API, etc. Cuando trabajamos con K8 tenemos diferentes tipos de archivos de configuración, uno de ellos son los archivos de configuración de secretos.
+
+Para esto podemos crear archivos con la extension YAML en donde definimos las variables de entorno sensibles, por ejemplo:
+
+```yaml
+# secret-dev.yaml
+
+#object that store enviroments variables that could be have sensitive data like a password
+apiVersion: v1
+kind: Secret
+metadata:
+  name: postgres-secret
+  labels:
+    app: postgres
+    #meant that we can use arbitrary key pair values
+type: Opaque
+data:
+  POSTGRES_DB: cG9zdGdyZXM=
+  POSTGRES_USER: cG9zdGdyZXM=
+  POSTGRES_PASSWORD: cXdlcnR5
+```
+
+Este seria el archivo de configuración para la base de datos, en donde definimos las variables de entorno sensibles, codificadas en base64.
+
+Necesitamos crear otro archivo para configurar el pod de DBMS, por ejemplo:
+
+```yaml
+# secret-pgadmin.yaml
+
+#object that store enviroments variables that could be have sensitive data like a password
+apiVersion: v1
+kind: Secret
+metadata:
+  name: pgadmin-secret
+  labels:
+    app: postgres
+    #meant that we can use arbitrary key pair values
+type: Opaque
+data:
+  PGADMIN_DEFAULT_EMAIL: YWRtaW5AYWRtaW4uY29t
+  PGADMIN_DEFAULT_PASSWORD: cXdlcnR5
+  PGADMIN_PORT: ODA=
+```
+
+Este seria el archivo de configuración para el panel de administración de la base de datos, en donde definimos las variables de entorno sensibles, codificadas en base64.
+
+### Almacenamiento persistente, volúmenes, claims y configmaps
+
+En Kubernetes podemos usar volúmenes para almacenar datos de forma persistente, podemos configurar archivos de configuración para definir volúmenes, reclamos y mapas de configuración.
+
+Un volumen es un directorio que contiene datos, un claim es una solicitud de almacenamiento persistente y un mapa de configuración es un objeto de Kubernetes que nos permite almacenar configuraciones en un archivo YAML.
+
+Para definir un volumen en Kubernetes podemos usar el siguiente archivo de configuración:
+
+```yaml
+# persistence-volume.yaml
+
+#persistence volumen (PV) is a piece of storage that have idependent lifecycle from pods 
+#thees preserve data throug restartin, rescheduling and even deleting pods
+#PersistenceVolumeCalin is a request for storage by the user that can be fulfilled by teh PV
+kind: PersistentVolume
+#version of ApiServer on control panel node (/api/v1) check using kubectl api-versions
+apiVersion: v1
+metadata:
+  name: postgres-volume
+  labels:
+    #it is aplugin suport many luke amazon EBS azure disk etc.  local = local storage devices mounted on nodes.
+    type: local
+    app: postgres
+spec:
+  storageClassName: manual
+  capacity:
+    storage: 5Gi
+    #many pods on shcheduled on differents nodes can read and write
+  accessModes:
+    - ReadWriteMany
+    #path on cluster's node
+  hostPath:
+    path: "/mnt/data/"
+```
+
+Este seria el archivo de configuración para definir un volumen en Kubernetes, en donde definimos el nombre del volumen, la capacidad, el modo de acceso y la ruta del host.
+
+Una ves definido este volume, necesitamos definir un archivo de configuración para el claim el cual hace una solicitud de almacenamiento persistente, por ejemplo:
+
+```yaml
+# persistence-volume-claim.yaml
+
+#it is a reques of resource (persistence volume) from a pod by example, teh pod claim by a storage throug PVC
+kind: PersistentVolumeClaim
+apiVersion: v1
+metadata:
+  name: postgres-claim
+  labels:
+    app: postgres
+spec:
+  storageClassName: manual
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 2Gi
+```
+
+Es básicamente un archivo de configuración para definir un reclamo de almacenamiento persistente, en donde definimos el nombre del reclamo, el modo de acceso y los recursos solicitados.
+
+Por último necesitamos definir un archivo de configuración para el mapa de configuración, este fichero contiene la inicialización de la base de datos, por ejemplo:
+
+```yaml
+# configmap-postgres-initdb.yaml
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-init-script-configmap
+data:
+  initdb.sh: |-
+   #!/bin/bash
+   set -e
+   psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-EOSQL
+    CREATE USER billingapp WITH PASSWORD 'qwerty';
+    CREATE DATABASE billingapp_db;
+    GRANT ALL PRIVILEGES ON DATABASE billingapp_db TO billingapp;
+   EOSQL
+```
+
+Este seria el archivo de configuración para definir un mapa de configuración en Kubernetes, en donde definimos el nombre del mapa de configuración y el script de inicialización de la base de datos.
+
+### Definir el estado deseado de la aplicación: Deployments o manifesto
+
+En Kubernetes podemos definir el estado deseado de la aplicación con un objeto llamado `Deployment`, este objeto nos permite definir el estado deseado de la aplicación, como el número de réplicas, la imagen, el puerto, etc.
+
+Para definir un `Deployment` en Kubernetes podemos usar el siguiente archivo de configuración:
+
+```yaml
+# deployment-postgres.yaml
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres-deployment
+  labels:
+    app: postgres
+spec:
+#Pods number replicates
+  replicas: 1
+  #Define how the Deployment identify the pods that it could manage
+  selector: 
+    matchLabels:
+     app: postgres
+     #pod template specification
+  template:
+    metadata:
+    #define teh labels for all pods
+      labels:
+        app: postgres       
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:latest
+          imagePullPolicy: IfNotPresent
+          #open the port to allow send and receive traffic in teh container
+          ports:
+            - containerPort: 5432
+            #read envars from secret file
+          envFrom:
+            - secretRef:
+                name: postgres-secret
+          volumeMounts:
+          #This is the path in the container on which the mounting will take place.
+            - mountPath: /var/lib/postgresql/data
+              name: postgredb
+            - mountPath: /docker-entrypoint-initdb.d
+              name : init-script
+      volumes:
+        - name: postgredb
+          persistentVolumeClaim:
+            claimName: postgres-claim
+        - name: init-script
+          configMap:
+             name: postgres-init-script-configmap
+```
+
+Este seria el archivo de configuración para definir un `Deployment` en Kubernetes, en donde definimos el nombre del `Deployment`, el número de réplicas, la imagen, el puerto, las variables de entorno, el volumen y el mapa de configuración.
+
+Luego definimos el archivo de configuración `Deployment` para el panel de administración de la base de datos, por ejemplo:
+
+```yaml
+# deployment-pgadmin.yaml
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pgadmin-deployment
+spec:
+  selector:
+   matchLabels:
+    app: pgadmin
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: pgadmin
+    spec:
+      containers:
+        - name: pgadmin4
+          image: dpage/pgadmin4        
+          envFrom:
+            - secretRef:
+                name: pgadmin-secret
+          ports:
+            - containerPort: 80
+              name: pgadminport
+```
+
+### Definición de servicios: Service
+
+Podemos definir el objeto `Service` en Kubernetes para exponer la aplicación en un puerto del host. Para definir un `Service` en Kubernetes podemos usar el siguiente archivo de configuración:
+
+```yaml
+# service-postgres.yaml
+kind: Service
+apiVersion: v1
+metadata:
+  name: postgres-service
+  labels:
+    app: postgres
+spec:  
+  ports:
+  - name: postgres
+    port: 5432
+    nodePort : 30432 
+  #type: LoadBalancer
+  type: NodePort
+  selector:
+   app: postgres
+```
+
+En donde definimos el nombre del servicio, el puerto, el tipo de servicio y el selector.
+
+Luego definimos el archivo de configuración `Service` para el panel de administración de la base de datos, por ejemplo:
+
+```yaml
+# service-pgadmin.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: pgadmin-service
+  labels:
+    app: pgadmin
+spec:
+  selector:
+   app: pgadmin
+  type: NodePort
+  ports:
+   - port: 80
+     nodePort: 30200
+```
+
+### Crear los objetos en el cluster de Kubernetes
+
+Una ves definidos todos estos objetos en archivos de configuración YAML, podemos crearlos en el cluster de Kubernetes con el siguiente comando:
+
+```bash
+kubectl apply -f archivo.yaml
+```
+
+Podemos hacerlo uno por uno o todos juntos, por ejemplo:
+
+```bash
+kubectl apply -f ./
+```
+
+Estando posicionados dentro de la carpeta que contiene todos los archivos de configuración con `./` indicamos que se ejecuten todos los archivos de configuración.
+
+### Orquestar la aplicación
+
+Una vez configurada la base de datos, los servicios y los volúmenes, nos queda agregar el frontend y el backend de la aplicación, para esto necesitamos definir los archivos de configuración correspondientes.
+
+Por ejemplo, para el backend de la aplicación:
+
+```yaml
+# deployment-billingapp-back.yaml
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: billing-app-back-deployment
+spec:
+  selector:
+   matchLabels:
+    app: billing-app-back
+  replicas: 3
+  template:
+    metadata:
+      labels:
+        app: billing-app-back
+    spec:
+      containers:
+        - name: billing-app-back
+          image: billingapp-back:0.0.4       
+          ports:
+            - containerPort: 7080
+              name: billingappbport
+```
+
+Y para el frontend de la aplicación:
+
+```yaml
+# deployment-billingapp-front.yaml
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: billing-app-front-deployment
+spec:
+  selector:
+   matchLabels:
+    app: billing-app-front
+  replicas: 2
+  template:
+    metadata:
+      labels:
+        app: billing-app-front
+    spec:
+      containers:
+        - name: billing-app-front
+          image: billingapp-front:0.0.4 
+          ports:
+            - containerPort: 80
+              name: billingappfport
+```
+
+También necesitamos definir los servicios correspondientes, por ejemplo:
+
+```yaml
+# service-billingapp-back.yaml
+
+kind: Service
+apiVersion: v1
+metadata:
+  name: billing-app-back-service
+  labels:
+    app: billing-app-back
+spec:   
+  ports:
+  - name: billing-app-back
+    port: 7080
+    nodePort : 30780 
+  #type: LoadBalancer
+  type: NodePort
+  selector:
+   app: billing-app-back
+```
+
+Y para el frontend:
+
+```yaml
+# service-billingapp-front.yaml
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: billing-app-front-service
+  labels:
+    app: billing-app-front
+spec:
+  selector:
+   app: billing-app-front
+  type: NodePort 
+  ports:
+   - port: 80
+     nodePort: 30100
+```
+
+Una ves definidos todos estos objetos en archivos de configuración YAML, podemos crearlos en el cluster de Kubernetes con el siguiente comando:
+
+```bash
+kubectl apply -f ./
+```
