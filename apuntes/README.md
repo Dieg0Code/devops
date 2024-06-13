@@ -894,3 +894,170 @@ docker stack rm billing
 ```
 
 ## Kubernetes
+
+Kubernetes es una plataforma de orquestación de contenedores, es la mas usada actualmente en entornos empresariales, es una herramienta de código abierto que permite automatizar la implementación, el escalado y la administración de aplicaciones en contenedores. También existe OpenShift que es una versión de Kubernetes de Red Hat.
+
+En escenarios en donde tenemos cientos o miles de contenedores, Kubernetes es la mejor opción ya que nos permite manejar la infraestructura como código, orquestar microservicios, manejar clusters, tolerancia a fallos, alta disponibilidad, etc.
+
+### Escalabilidad vertical, horizontal y cluster
+
+La escalabilidad es la capacidad de los sistemas para adaptarse al crecimiento, por demanda y complejidad.Por ejemplo supongamos que tenemos un sistema que fue diseñado para soportar una carga de trabajo de al menos 100 personas conectadas simultáneamente, supongamos que para soportar dicha carga de usuarios necesitamos 2 core de CPU y 4gb de RAM par que el sistema no se caiga y pueda funcionar correctamente con esa carga, si la carga no aumentara estos recursos seria suficientes, pero en la realidad esto no suele ser así, la carga de usuarios con el tiempo suele aumentar bastante, ademas también la complejidad del sistema suele aumentar por lo que las nuevas versiones van a necesitar mas recursos para seguir funcionando con normalidad, podemos llegar a duplicar los recursos necesarios en un principio, incluso mas. Cuando nos enfrentamos a esta situación tenemos que plantearnos como enfrentar ese problema de escalabilidad, vertical u horizontalmente.
+
+El escalamiento vertical consiste en agregar más recursos al mismo nodo y con esto aumentar su poder de computo, por ejemplo, si tenemos un nodo con 2 core de CPU y 4gb de RAM y necesitamos mas recursos podemos agregar 2 core de CPU y 4gb de RAM mas, con esto el nodo tendría 4 core de CPU y 8gb de RAM, esto es lo que se conoce como escalamiento vertical.
+
+Por otro lado el escalamiento horizontal consiste en agregar mas nodos con las mismas características y distribuir la carga de trabajo entre ellos, por ejemplo si tenemos un nodo con 2 core de CPU y 4gb de RAM y necesitamos mas recursos podemos agregar otro nodo con las mismas características, con esto tendríamos dos nodos con 2 core de CPU y 4gb de RAM cada uno, esto es lo que se conoce como escalamiento horizontal.
+
+El escalamiento vertical tiene un límite, ya que no podemos agregar recursos infinitamente a un nodo, en algún momento llegaremos a un límite en el que no podremos seguir agregando mas recursos, por otro lado el escalamiento horizontal no tiene un límite, podemos agregar nodos infinitamente y distribuir la carga de trabajo entre ellos.
+
+El escalamiento vertical es mas sencillo de implementar, ya que solo debemos agregar mas recursos al nodo, mientras que el escalamiento horizontal es mas complejo, ya que debemos distribuir la carga de trabajo entre los nodos y asegurarnos de que todos los nodos estén sincronizados, es aquí donde entra en juego Kubernetes.
+
+## Principales características de Kubernetes
+
+Kubernetes es una plataforma de orquestación de contenedores que nos permite escalar horizontalmente, es decir, agregar mas nodos al clúster y distribuir la carga de trabajo entre ellos. Kubernetes nos permite escalar de forma automática, es decir, si la carga de trabajo aumenta, Kubernetes puede agregar mas nodos al clúster y distribuir la carga de trabajo.
+
+También es conocido como `K8`, esta inspirado en el sistema llamado `Borg` de Google, es un administrador de clusters capaz de operar cientos de miles de trabajos de miles de aplicaciones diferentes en varios clusters cada uno con hasta decenas de maquinas.
+
+Principales características:
+
+- Opensource: Kubernetes es un proyecto de código abierto, lo que significa que cualquiera puede contribuir al desarrollo de la plataforma.
+- Auto-Sanado: Kubernetes es capaz de detectar y corregir errores automáticamente, por ejemplo, si un nodo falla, Kubernetes puede reiniciar los contenedores en otro nodo.
+- Escalado Horizontal: Kubernetes es capaz de escalar horizontalmente, es decir, agregar mas nodos al clúster y distribuir la carga de trabajo entre ellos.
+- Balanceo de carga y discovery: Kubernetes es capaz de distribuir la carga de trabajo entre los nodos y descubrir automáticamente los servicios en el clúster.
+- Licencia Apache v2: Kubernetes es una plataforma de código abierto con licencia Apache v2, lo que significa que cualquiera puede usarla, modificarla y distribuirla libremente.
+- Creado por Google en 2015: Kubernetes fue creado por Google en 2015 y es una de las plataformas de orquestación de contenedores mas populares del mundo.
+- Escrito en Go: Kubernetes esta escrito en Go, un lenguaje de programación de código abierto desarrollado por Google.
+- Mantenido por Cloud Native Computing Foundation (parte de la Linux Foundation): Kubernetes es mantenido por la Cloud Native Computing Foundation, una organización sin fines de lucro que promueve la adopción de tecnologías de código abierto en la nube.
+
+## Arquitectura interna de un clúster de Kubernetes
+
+Un cluster de Kubernetes se compone de varias máquinas llamadas Nodos, que se agrupan en **nodos maestros** y **nodos workers**. Los **nodos maestros** controlan el cluster y los **nodos workers** alojan los pods que son los componentes de carga de la aplicación.
+
+### Nodos maestros
+
+Los nodos maestros son los encargados de controlar el cluster, se componen de los siguientes componentes:
+
+- **API Server**: Provee la interacción para las herramientas de administración de kubectl o el dashboard de Kubernetes.
+- **Scheduler**: Es el encargado de asignar los pods a los nodos, es el componente que decide en que nodo se va a ejecutar un pod.
+- **Controller Manager**: Supervisa controladores más pequeños que ejecutan tareas de replicar pods y maneja operaciones de los nodos.
+- **etcd**: Es el almacén de datos del cluster, es el componente que se encarga de almacenar el estado del cluster.
+
+### Nodos workers
+
+Los nodos workers son los encargados de alojar los pods, se componen de los siguientes componentes:
+
+- **Kubelet**: Es el agente que se ejecuta en cada nodo y se encarga de gestionar los pods.
+- **Kube-proxy**: Es el encargado de gestionar el tráfico de red en el cluster, es el componente que se encarga de redirigir el tráfico de red a los pods.
+- **Container Runtime**: Es el motor de contenedores que se ejecuta en cada nodo, es el componente que se encarga de ejecutar los contenedores.
+
+### Tipos de Clusters de Kubernetes, gestionados, On-Premise y All-in-one
+
+Existen varios tipos de clusters de Kubernetes, los mas comunes son:
+
+- **On-Premise**: Son clusters que se ejecutan en un entorno local, es decir, en un centro de datos propio, en un servidor local o en una máquina virtual.
+  - **All-in-one**: Se instala todo en un único nodo usando ``mini kube`` para pruebas y desarrollo.
+  - **Single master and multiworker**: Un nodo para el control panel y uno o más nodos controlados por el nodo maestro.
+  - **Single master, single etcd and multiworker**: Un nodo para el control panel, un nodo para almacenar la configuración y el estado y uno o más nodos controlados por el nodo maestro.
+  - **Multi master and multiworker**: Múltiples nodos para el control panel en alta disponibilidad y uno o más nodos controlados por el master en HA (high availability).
+
+- **Multi master, multi etcd and multiworker**: Múltiples nodos par el control panel, múltiples nodos para el almacenamiento etcd en alta disponibilidad y uno o más nodos controlados por el master en HA.
+
+- **Gestionados**: Son clusters que se ejecutan en un entorno en la nube, es decir, en un proveedor de servicios en la nube como AWS, Azure o Google Cloud.
+  - **GKE (Google Kubernetes Engine)**: Es un servicio de Google Cloud que permite ejecutar clusters de Kubernetes en la nube de Google.
+  - **EKS (Amazon Elastic Kubernetes Service)**: Es un servicio de AWS que permite ejecutar clusters de Kubernetes en la nube de Amazon.
+  - **AKS (Azure Kubernetes Service)**: Es un servicio de Azure que permite ejecutar clusters de Kubernetes en la nube de Microsoft.
+  - **IBM Cloud Kubernetes Service**: Es un servicio de IBM Cloud que permite ejecutar clusters de Kubernetes en la nube de IBM.
+
+### Objetos de Kubernetes para definir infraestructura como código
+
+En Kubernetes todo se conoce como un objeto y estos objetos se definen en ficheros YAML.
+
+Las definiciones se guardan y ejecutan en el cluster mediante el API Server.
+
+La definición de objetos en Kubernetes también se conoce como infraestructura como código.
+
+- **Pods**: Unidad más pequeña que se puede desplegar y gestionar en Kubernetes. Es un grupo de uno o más contenedores que comparte almacenamiento, red y especificaciones de ejecución. Son efímeros, es decir, se pueden crear y destruir fácilmente.
+- **Deployments**: Describe el estado deseado de una implementación, ejecuta múltiples réplicas de la aplicación, reemplaza las que están defectuosas o las que no responden.
+- **Services**: Definición de cómo exponer una aplicación que se ejecuta en un conjunto de pods como un servicio de red (por defecto se usa roud-robin para balanceo de carga).
+- **Config Map**: Permite desacoplar la configuración para hacer las imágenes mas portables, almacenan variables de entorno, argumentos para la linea de comandos o configuración de volúmenes que pueden consumir los pods (no encriptación).
+- **Labels**: Pares clave valor ("environment" : "QA") para organizar, seleccionar, consultar y monitorizar objetos de forma más eficiente, ideales para UI y CLIs.
+- **Selectores**: Mecanismos para hacer consultas a las etiquetas. kubectl get pods -l environment in (production), tier in (frontend).
+
+Para desplegar una aplicación en Kubernetes necesitamos como mínimo un pod, un deployment y un servicio.
+
+### Instalación de Kubectl
+
+Mini Kube es una herramienta que nos permite ejecutar un cluster de Kubernetes en una sola máquina, es ideal para pruebas y desarrollo.
+
+Para instalar Mini Kube necesitamos instalar Kubectl, que es la herramienta de línea de comandos que nos permite interactuar con Kubernetes.
+
+Una vez que tengamos Kubectl instalado podemos instalar Mini Kube con el siguiente comando:
+
+```bash
+brew install kubectl
+```
+
+Luego podemos iniciarlo con el siguiente comando:
+
+```bash
+minikube start
+```
+
+Con esto iniciamos un cluster de Kubernetes en nuestra máquina.
+
+### Comandos para administrar minikube
+
+- `minikube start`: Inicia un cluster de Kubernetes en nuestra máquina.
+- `minikube stop`: Detiene el cluster de Kubernetes en nuestra máquina.
+- `minikube status`: Muestra el estado del cluster de Kubernetes en nuestra máquina.
+- `minikube dashboard --url`: Abre el dashboard de Kubernetes en el navegador.
+- `minikube delete`: Elimina el cluster de Kubernetes en nuestra máquina.
+- `minikube pause`: Pausa el cluster de Kubernetes en nuestra máquina.
+- `minikube unpause`: Despausa el cluster de Kubernetes en nuestra máquina.
+- `minikube addons list`: Lista los addons de Kubernetes en nuestra máquina.
+- `minikube delete --all`: Elimina todos los clusters de Kubernetes en nuestra máquina.
+
+### Crear un pod mediante Kubectl para desplegar una aplicación en Kubernetes
+
+```bash
+kubectl run kbillingapp --image=sotobotero/udemy-devops:0.0.1 --port=80 80
+```
+
+Con este comando creamos un pod en Kubernetes con la imagen `sotobotero/udemy-devops:0.0.1` y el puerto `8080`.
+
+Si queremos ver los pods que se están ejecutando en el cluster podemos ejecutar el siguiente comando:
+
+```bash
+kubectl get pods
+```
+
+Y nos mostrará una lista de los pods que se están ejecutando en el cluster.
+
+Para ver información mas detallada de un pod en particular podemos ejecutar el siguiente comando:
+
+```bash
+kubectl describe pod nombre_pod
+```
+
+Este comando nos mostrará información detallada de un pod en particular, como la dirección IP, el estado, los eventos, etc.
+
+Para exponer el servicio en un puerto del host podemos ejecutar el siguiente comando:
+
+```bash
+kubectl expose pod nombre_pod --type=LodBalancer --port=8080 --target-port=80
+```
+
+Con este comando exponemos el servicio en el puerto `8080` del host.
+
+Podemos comprobar que el servicio se ha expuesto correctamente con el siguiente comando:
+
+```bash
+kubectl get services
+```
+
+Para acceder a este servicio debemos pedir la url a minikube con el siguiente comando:
+
+```bash
+minikube service --url nombre_pod
+```
+
+Nos va a devolver una url que podemos pegar en el navegador para acceder al servicio.
