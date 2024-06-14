@@ -374,3 +374,143 @@ docker network prune ```
  ```shell
     docker swarm update --autolock=true
 ```
+
+Descargar imagen sonar
+
+```shell
+docker pull sonarqube
+```
+
+Crear contenedor de sonar
+
+```shell
+docker run -d --name sonarqube -p 9000:9000 -p 9092:9092 sonarqube
+```
+
+crear red virtual
+
+```shell
+docker network create jenkins_sonarqube
+```
+
+verificar redes
+
+```shell
+docker network ls
+```
+
+conectar los contenedores a la red virtual
+
+```shell
+docker network connect jenkins_sonarqube sonarqube
+docker network connect jenkins_sonarqube reverent_robinson (cambiar por el nombre que cada uno tenga para el contendor jenkins)
+```
+
+Ver los detalles de un contenedor
+
+```shell
+docker container inspect sonarqube 
+```
+
+parametros de la configuración del paso referente a sonar
+
+```shell
+scan
+-X
+```
+
+Propiedades usadas en la configuracion del pipeline para añadir el paso de sponarqube
+
+```
+sonar.projectKey=sonarqube
+sonar.sources=billing/src/main/java
+sonar.java.binaries=billing/target/classes
+```
+
+## Configurar el agente de Docker para construir la imagen en el pipeline
+
+### Plugin que debe ser instalado
+- **CloudBees Docker Build and Publish**
+
+### Nombre de imagen
+- **cuentadockerhub/billingapp-backend**
+
+### URL del agente
+- **tcp://172.17.0.1:2375**
+
+### Contexto para la imagen del backend
+- **billing/**
+
+### Argumentos adicionales
+- `--build-arg JAR_FILE=target/*.jar`
+
+### Ruta del fichero que se debe editar en el host para exponer el API del daemon de Docker
+- **/lib/systemd/system/docker.service**
+
+**Usar `nano` o `vi` con `sudo` para poder guardar.**
+
+### Ajustar el contenido de la línea para que quede como esta:
+- `ExecStart=/usr/bin/dockerd -H fd:// -H=tcp://0.0.0.0:2375`
+
+### Reiniciar servicios
+```sh
+sudo systemctl daemon-reload
+sudo service docker restart
+```
+
+### Verificar y/o reiniciar contenedores de Docker
+- `docker ps` -> Ver contenedores activos
+- `docker ps -a` -> Ver todos
+
+### Comprobar que el API es accesible mediante el protocolo HTTP con el siguiente comando o en un navegador
+```sh
+curl http://localhost:2375/images/json
+```
+
+### Hacer puente entre el contenedor de Jenkins y el host local para acceder al Docker daemon mediante TCP
+```sh
+ip route show default | awk '/default/ {print $3}'
+```
+Después:
+```sh
+ip a
+```
+Buscar la red de Docker 01 y usarla en lugar de localhost. En la configuración del plugin en el pipeline debería ser `172.17.0.1` o similar.
+
+---
+
+## Configurar la integración con Kubernetes
+
+### Conectarse como root en Jenkins e instalar el `kubectl`
+```sh
+docker exec -it --user=root jenkins /bin/bash
+```
+
+### Conectar Jenkins a la red de Minikube
+```sh
+docker network ls
+docker network connect minikube jenkins
+```
+
+### Plugin que debe ser instalado
+- **Kubernetes plugin**
+
+### Ver la configuración de Minikube
+```sh
+kubectl config view
+```
+
+### Consultar los service account
+```sh
+kubectl --namespace default get serviceaccount
+```
+
+### Ver el detalle del service account
+```sh
+kubectl --namespace default get serviceaccount jenkins -o yaml
+```
+
+### Obtener el token del service account
+```sh
+kubectl describe secrets/jenkins-token-rk2mg
+```

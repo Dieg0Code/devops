@@ -1852,3 +1852,366 @@ Ahora debemos habilitar las notificaciones de Slack en nuestro pipeline.
 - Presionamos `aplicar` y `guardar`.
 
 Con esto tenemos configurado nuestro pipeline para que nos envie notificaciones a Slack en caso de que ocurra un evento.
+
+## Entrega continua y despliege continuo (CD) Sonarqube + Jenkins, Kubernetes
+
+SonarQube es una plataforma opensource para la inspección continua de la calidad del código, nos permite ejecutar revisiones automáticas para verificar la calidad de este. SonarQube nos permite detectar errores, vulnerabilidades, bugs, duplicados, etc.
+
+Para instalar SonarQube podemos hacerlo desde Docker Hub con el siguiente comando:
+
+```bash
+docker pull sonarqube
+```
+
+Luego podemos ejecutar la imagen con el siguiente comando:
+
+```bash
+docker run -d --name sonarqube -p 9000:9000 -p 9092:9092 sonarqube
+```
+
+Para que los contenedores de Jenkins con SonarQube se puedan comunicar deben estar en la misma red, para esto necesitamos crear una red en Docker con el siguiente comando:
+
+```bash
+docker network create jenkins_sonarqube
+```
+
+Luego debemos agregar los contenedores a la red con el siguiente comando:
+
+```bash
+docker network connect jenkins_sonarqube sonarqube
+```
+
+```bash
+docker network connect jenkins_sonarqube jenkins
+```
+
+Para ver la interfaz de SonarQube debemos ingresar a la siguiente URL:
+
+```bash
+http://localhost:9000
+```
+
+El usuario y la contraseña por defecto son `admin`, `admin`.
+
+Una vez dentro debemos ir a la sección de `Administration`, luego a la sección de `Security`, luego a la sección de `Users`.
+
+- Generamos un token de acceso que posteriormente vamos a usar en Jenkins.
+- Debemos ingresar a Jenkins e intalar el plugin de SonarQube `SonarQube Scanner`.
+- Luego vamos a la sección de `administrar jenkins`, luego a la sección de `configurar sistema`.
+- En la sección de `SonarQube servers` marcamos la opción `Enable injection of SonarQube server configuration as build environment variables`.
+- En la sección de `Add SonarQube` ingresamos un nombre, por ejemplo `sonarqube`.
+- En la sección de `Server URL` ingresamos la URL de SonarQube, como creamos una red con Docker la URL es `http://sonarqube:9000`.
+- En la sección de `Server authentication token` ingresamos el token que generamos en SonarQube. Tambien podemos agregar este token en `Panel de control/ Crendenciales/ Sistema/ Crendenciales globales`.
+- Presionamos `aplicar` y `guardar`.
+
+Luego debemos ingresar a la sección `Global Tool Configuration` y agregar el `SonarQube Scanner`.
+
+- Seleccionamos la opción `Add SonarQube Scanner`.
+- Le ponemos un nombre, por ejemplo `sonarqube`.
+- Marcamos la opción `Install automatically`.
+- Presionamos `aplicar` y `guardar`.
+
+## Agregar el escaneo de código con SonarQube al pipeline de Jenkins
+
+Para esto debemos ingresar a la sección `configurar` de nuestro pipeline y agregar las etapas necesarias.
+
+- Ingresaos a la sección `configurar` de nuestro pipeline.
+- Vamos a la seccion `Ejecutar` y seleccionamos `Añadir un nuevo paso` y seleccionamos `Execute SonarQube Scanner`.
+- En la sección `Analysis properties` ingresamos las propiedades de análisis, por ejemplo:
+  - `sonar.projectKey=sonarqube`
+  - `sonar.sources=billing/src/main/java`
+  - `sonar.java.binaries=billing/target/classes`
+- En la sección `Additional arguments` ingresamos `-X`.
+
+Tambien debemos cambiar el orden de las etapas, para que el escaneo de código se ejecute primero, despues compilamos el proyecto y luego hacemos el merge.
+
+Esta herramienta nos ayuda como desarrolladores a mejorar la calidad del código, analisa factores como Bugs, vulnerabilidades, duplicados, Code Smells, Coverage, Lines of Code, etc.
+
+En la sección `issues` de SonarQube podemos ver los problemas que detecto en el código, SonarQube nos entrega un reporte detallado de los problemas que detecto en el código y nos da recomendaciones para solucionarlos.
+
+### Crear imagen desde jenkins: Instalar y configurar el plugin de Docker
+
+Podemos instalar el plugin de Docker en Jenkins para configurar un pipeline que nos permita crear una imagen de Docker y subirla a Docker Hub.
+
+- Instalamos el plugin de Docker en Jenkins, `CloudBees Docker Build and Publish`.
+- Debemos configurar el pipelien de Jenkins.
+- Vamos a la seccion `Ejecitar` del pipeline y añadimos un nuevo paso, seleccionamos `Docke Build and Publish`.
+- En la sección `Repository Name` ingresamos el nombre del repositorio de Docker Hub. `nombreRepo/billingapp-backend` por ejemplo.
+- En la sección `Tag` ingresamos el tag de la imagen, por ejemplo `0.0.1`.
+- En la sección `Docker Host URI` ingresamos la URL del host en donde está el Engine de Docker
+  - Como tenemos Jenkins corriendo en un contenedor de Docker y el daemon de Docker corriendo en el host, debemos configurar un para que podamos compartir el daemon con el contenedor de Jenkins. Para esto debemos hacer un puente entre la red local y la red de Docker, para esto debemos ejecutar el siguiente comando:
+  ```bash
+  ip route show default | awk '/default/ {print $3}'
+  ```
+  Con este comando obtenemos la IP del host, luego debemos ejecutar el siguiente comando:
+  ```bash
+  ip a
+  ```
+  Con este comando obtenemos la IP de la interfaz de red, debemos buscar la red llama `docker0` para ver que segemento de red está usando Docker por ejemplo `172.17.0.1`
+
+  - Con esa direccion ip armamos la URL de Docker, por ejemplo `tcp://172.17.0.1:2375` y la ingresamos en la sección `Docker Host URI`.
+  - Tambien debemos hacer una configuración en el archivo de configuración de Docker `docker.service` para que Docker escuche en la red local, para esto debemos ejecutar el siguiente comando:
+  ```bash
+  sudo nano /lib/systemd/system/docker.service
+  ```
+
+  En el apartado `ExecStart` debemos agregar la siguiente linea:
+  ```bash
+  -H fd:// -H tcp://0.0.0.0:2375
+  ```
+
+  Debería quedar algo así:
+  ```bash
+  ExecStart=/usr/bin/dockerd -H fd:// -H tcp://0.0.0.0:2375
+  ```
+  - Luego debemos reiniciar el servicio de Docker con el siguiente comando:
+  ```bash
+  sudo systemctl daemon-reload
+  sudo service restart docker
+  ```
+- En la sección `Registry Credentials` seleccionamos `Add` y agregamos las credenciales de Docker Hub.
+- Presionamos `aplicar` y `guardar`.
+
+En el proyecto del backend debemos ir archivo `aplication.properties` y agregar la siguiente linea:
+
+```properties
+server.port=7280
+```
+
+Ademas debemos agregar el Dockerfile en la raiz del proyecto con el siguiente contenido:
+
+```Dockerfile
+FROM openjdk:8-jdk-alpine
+RUN addgroup -S devopsc && adduser -S javams -G devopsc
+USER javams:devopsc
+ENV JAVA_OPTS=""
+ARG JAR_FILE
+ADD ${JAR_FILE} app.jar
+ # use a volume is mor efficient and speed that filesystem
+VOLUME /tmp
+EXPOSE 7280
+ENTRYPOINT [ "sh", "-c", "java $JAVA_OPTS -Djava.security.egd=file:/dev/./urandom -jar /app.jar" ]
+```
+
+En el proyecto del frontend debemos agregar el Dockerfile en `src` con el siguiente contenido:
+
+```Dockerfile
+FROM nginx:alpine
+ # use a volume is mor efficient and speed that filesystem
+VOLUME /tmp
+RUN rm -rf /usr/share/nginx/html/*
+COPY nginx.conf /etc/nginx/nginx.conf
+COPY billingApp_prep /usr/share/nginx/html/billingApp_prep
+COPY billingApp_prod /usr/share/nginx/html/billingApp_prod
+#expose app and 80 for nginx app
+EXPOSE 80 81
+CMD ["nginx", "-g", "daemon off;"]
+```
+
+Ademas en el archivo `environment.prod.ts` debemos agregar el mismo puerto que en el backend:
+
+```typescript
+export const environment = {
+  production: true,
+  api_url: 'http://localhost:7280'
+};
+```
+
+Lo mismo en el archivo `environment.ts`:
+
+```typescript	
+export const environment = {
+  production: false,
+  api_url: 'http://localhost:7280'
+};
+```
+
+- En la sección `Ejecutar` del pipeline de Jenkins, en la parte de `Docker Build and Publish` debemos seleccionar la opción `advanced`.
+- En la sección `Build context` ingresamos la ruta del proyecto, por ejemplo `billing/` para indicar donde está el Dockerfile.
+- En la sección `Additional Build Arguments` ingresamos `--build-arg JAR_FILE=target/*.jar`.
+
+### Deploy en kubernetes desde Jenkins
+
+Para desplegar la aplicación en Kubernetes desde Jenkins necesitamos instalar el plugin de Kubernetes en Jenkins.
+
+- Debemos conectarnos como root al contenedor de Jenkins con el siguiente comando:
+
+```bash
+docker exec -it --user=root jenkins bin/bash
+```
+
+- Una vez dentro del contenedor de Jenkins debemos instalar `kubectl`.
+- Debemos conectar el contenedor de Jenkins a la misma red de minikube con el siguiente comando:
+
+```bash
+docker network connect minikube jenkins
+```
+
+- Luego hay que instalar el plugin de Kubernetes en Jenkins.
+
+### Configurar el plugin de Kubernetes en Jenkins
+
+- Debemos conseguir los datos necesarios de Kubernestes para configurar el plugin, estos datos son la `URL del servidor` y el `token`. Para esto debemos aplicar el siguiente archivo de configuración:
+
+```yaml
+# jenkins-account.yaml
+#this file define a service account for kubernetesplugins on jenkins
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: jenkins
+  namespace: default
+---
+kind: Role
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: jenkins
+  namespace: default
+rules:
+- apiGroups: [""]
+  resources: ["pods","services"]
+  verbs: ["create","delete","get","list","patch","update","watch"]
+- apiGroups: ["apps"]
+  resources: ["deployments"]
+  verbs: ["create","delete","get","list","patch","update","watch"]
+- apiGroups: [""]
+  resources: ["pods/exec"]
+  verbs: ["create","delete","get","list","patch","update","watch"]
+- apiGroups: [""]
+  resources: ["pods/log"]
+  verbs: ["get","list","watch"]
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["get"]
+- apiGroups: [""]
+  resources: ["persistentvolumeclaims"]
+  verbs: ["create","delete","get","list","patch","update","watch"]
+ 
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: jenkins
+  namespace: default
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: jenkins
+subjects:
+- kind: ServiceAccount
+  name: jenkins
+---
+# Allows jenkins to create persistent volumes
+# This cluster role binding allows anyone in the "manager" group to read secrets in any namespace.
+kind: ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: jenkins-crb
+subjects:
+- kind: ServiceAccount
+  namespace: default
+  name: jenkins
+roleRef:
+  kind: ClusterRole
+  name: jenkinsclusterrole
+  apiGroup: rbac.authorization.k8s.io
+---
+kind: ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  # "namespace" omitted since ClusterRoles are not namespaced
+  name: jenkinsclusterrole
+rules:
+- apiGroups: [""]
+  resources: ["persistentvolumes"]
+  verbs: ["create","delete","get","list","patch","update","watch"]
+```
+
+- Lo aplicamos con el siguiente comando:
+
+```bash
+kubectl apply -f jenkins-account.yaml
+```
+
+- Luego debemos obtener la URL de donde esta el certificado del Cluster y  la URL del servidor, podemos obtener estos datos con el siguiente comando:
+
+```bash
+kubectl config view
+```
+
+- Tambien necesitamos el token de acceso de la cuenta que creamos en el archivo de configuración.
+
+```bash
+kubectl --namespace default get serviceaccount
+```
+
+- Verificamos que la cuenta de jenkins se creo correctamente.
+- Vemos los detalles de la cuenta de jenkins con el siguiente comando:
+
+```bash
+kubectl --namespace default get serviceaccount jenkins -o yaml
+```
+
+- En donde nos interesa ver el name declarado, por ejemplo `jenkins-token-k2dqg`.
+- Con esto podemos obtener el token de acceso con el siguiente comando:
+
+```bash
+kubectl describe secrets/jenkins-token-k2dqg
+```
+
+- Con esto obtenemos el token de acceso que necesitamos para configurar el plugin de Kubernetes en Jenkins.
+- Agregamos este token en Jenkins en `Panel de control/ Crendenciales/ Sistema/ Crendenciales globales`, en donde agregamos el token y le ponemos una ID, por ejemplo `kubernetes-jenkins-server-account`.
+- Ingresamos a la sección `administrar jenkins`, luego a la sección `configurar sistema`.
+- Vamos a la sección `Cloud` y seleccionamos `Add a new cloud`.
+- Seleccionamos `Kubernetes Cloud details`.
+- En la sección `Kubernetes URL` ingresamos la URL del servidor de Kubernetes. La cual obtuvimos con el comando `kubectl config view`.
+- En la sección `Kubernetes server certificate key` ingresamos el certificado del servidor de Kubernetes. La cual obtuvimos con el comando `kubectl config view`. por ejemplo `/home/user/.minikube/ca.crt` esta es la ruta del certificado, podemos ver el contenido del certificado con el comando `cat /home/user/.minikube/ca.crt`, es el contenido el que ingresamos en la sección `Kubernetes server certificate key`.
+- Marcamos la casilla `Disable https certificate check`.
+- En la sección `Credentials` seleccionamos la credencial de Kubernetes que creamos anteriormente.
+
+Ahora debemos crear un pipeline que despliegue la aplicación en Kubernetes.
+
+- Creamos un nuevo pipeline en Jenkins y seleccionamos la opción `Pipeline`.
+- Seleccionamos la opción `GitHub project` y en la sección `Project url` ingresamos la URL del repositorio donde tenemos los archivos de configuración para el pipeline.
+- En la seccion `Pipeline` en la sección `Definition` seleccionamos `Pipeline script from SCM`.
+- En la sección `SCM` seleccionamos `Git`.
+- En la sección `Repository URL` ingresamos la URL del repositorio, la que termina en `.git`.
+- En la sección `Credentials` el usuario y la contraseña de la cuenta de GitHub.
+- En la sección `Branch Specifier` ingresamos la rama, por defecto `main`.
+- En la sección `Script Path` ingresamos la ruta del archivo de configuración del pipeline, por ejemplo `billing/Jenkinsfile`.
+
+```groovy
+pipeline {
+  agent any
+  stages {
+    stage('clone repository') {
+      steps {
+        sh '''java -version
+              mvn --version
+              git --version'''
+      }
+    }
+
+    stage('Deploy billing App') {
+      steps {
+        withCredentials(bindings: [
+                      string(credentialsId: 'kubernete-jenkis-server-account', variable: 'api_token')
+                      ]) {
+            sh 'kubectl --token $api_token --server https://192.168.49.2:8443 --insecure-skip-tls-verify=true apply -f deployment-billing-app-back-jenkins.yaml '
+          }
+
+        }
+      }
+
+    }
+  }
+```
+
+Este archivo de configuración del pipeline se encarga de clonar el repositorio, compilar el proyecto y desplegar la aplicación en Kubernetes.
+
+- Presionamos `aplicar` y `guardar`.
+- Podemos encadenar este pipeline con el anterior, para que una vez que se compile el proyecto se despliegue en Kubernetes. Para esto debemos ir a la sección `configurar` del pipeline anterior y en la sección `Acciones para ejecutar después` seleccionamos `Añadir una acción` y seleccionamos `Ejecutar otros proyectos`.
+- En la sección `Proyecto a ejecutar` ingresamos el nombre del pipeline que acabamos de crear.
+
+Con esto tenemos un pipeline que se encarga de clonar el repositorio, analizar el código con SonarQube, compilar el proyecto, crear una imagen de Docker y desplegar la aplicación en Kubernetes.
