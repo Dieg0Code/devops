@@ -1746,3 +1746,109 @@ ls -la /var/jenkins_home/.m2/repository/ruta/proyecto/billing
 Y con esto inspeccionamos la carpeta en la que jenkins nos dijo que se instalo el proyecto.
 
 ### Automatizar ejecución de pelines mediante eventos webHooks (ngrok, jenkins, git)
+
+GitHub nos permite configurar WebHooks, esto es una forma de tener comunicación basada en eventos, de tal manera que cuando un evento sucede en el repositorio este evento puede ser notificado a diferentes interesados como por ejemplo nuestro servidor de Jenkins. Para que esto sea posible nuestro servidor Jenkins tiene que ser visible desde internet, para esto podemos usar una herramienta llamada ngrok.
+
+Debemos descargar ngrok desde la página oficial y configurar lo con nuestro token personal de ngrok.
+
+Ngrok es un proxy, como nuestro servidor de Jenkins está ejecutandose en local, no es visible desde internet, con ngrok podemos exponer el puerto de Jenkins a internet y ngrok va a manejar la comunicación entre internet y nuestro servidor de Jenkins.
+
+Para exponer el puerto de Jenkins a internet con ngrok necesitamos ejecutar el siguiente comando:
+
+```bash
+./ngrok http 8080
+```
+
+Esto nos genera dos URLs, una para HTTP y otra para HTTPS, podemos usar la URL de HTTPs para configurar el WebHook en GitHub.
+
+- En nuestro repositorio de GitHub vamos a la sección de `Settings`, luego a la sección de `WebHooks`, seleccionamos la opción de `Add WebHook`.
+- En la sección de `Payload URL` ingresamos la URL de ngrok + `/github-webhook`.
+- En la sección de `Content type` seleccionamos `application/json`.
+- En la sección de `Which events would you like to trigger this webhook?` seleccionamos `Just the push event`.
+. Luego seleccionamos la opción de `Add WebHook`.
+
+Con esto cada vez que ocurra un evento de push en nuetro repositorio se enviara una notificación a Ngrok que a su ves la enviara a Jenkins.
+
+### Crear un pipeline jenkins basado en el webhook
+
+- En la consola de Jenkins vamos a la opción `administrar jenkins`.
+- Seleccionamos la opción `configurar sistema`.
+- Vamos a la seeción `github`.
+- Seleccionamos la opción `add github server`.
+- Le agregamos un nombre al `github server`
+- En la seccion `credentials` seleccionamos `jenkins` se nos abrira una ventana en donde podemos configurar la credencial.
+- En la sección `kind` seleccionamos `Secret text`.
+- En la sección `Secret` ingresamos un token de github, debemos generar este token desde la cuenta de gh.
+- Y presionamos el botón `Add`.
+
+Ahora debemos crear un pipeline que use este webhook
+
+- Marcamos la opción `GitHub proyect`.
+- Ingresamos la URL de proyecto.
+- En la sección `Configurar el origen del código` seleccionamos `Git`.
+- Ingresamos la URL del repositorio, la que termina en `.git`.
+- En la sección `Credentials` seleccionamos jenkins. Se nos habrira una ventana para configurar la credencial.
+- En la seccón `Kind` seleccionamos `User with password` y ingresamo el usuario y la contraseña de la cuenta.
+- En la sección `Branches to build` ingresamos el nombre de la rama que vamos a monitorear por ejemplo `origin/feature**` para monitorear todas la ramas que empiezen con el prefijo `feature`.
+- En la seccion de `Disparadores de ejecuciones` seleccionamos `Github hook trigger`.
+- En la sección `Ejecutar` seleccionamos `Ejecutar tareas 'maven' de nivel superior`.
+- En la sección `Goles` ingresamos `clean install`
+- En el apartado ``advanced``, en la sección `POM` ingresamos la ruta del fichero ``pom.xml``, por ejemplo `billing/pom.xml`.
+- Presionamos `aplicar` y ``guardar``.
+
+Con esto tenemos creado nuestro nuevo pipeline que hace uso del webhook de Github,se dispara cada vez que se hace un push en el repositorio y compila el proyecto.
+
+### Integracipon continua
+
+Un pipeline completo de integración continua, por ejemplo, deberia ejecutar todas las prubas unitarias, validar la calidad del código y si todo va bien hacer un merge en la rama principal y eliminar la rama de la característica.
+
+Para esto debemos ingresar al pipeline que habiamos creado anteriormente y agregarle las etapas necesarias. 
+
+- Ingresamos a la seccion `configurar`.
+- En la seccion `Disparadores de ejecuciones` quitamos la opción `Github hook trigger`. Ya que esta etapa la vamos a agregar manualmente.
+- En la seccion `Configurar el origen del código` seleccionamos la seccion `Additional Behaviours` y seleccionamos la opción `Custom user name/e-mail address`.
+- En la sección `User name` ingresamos el nombre del usuario que va a hacer el commit. En este caso `jenkins`.
+- En la sección `User e-mail address` ingresamos el correo del usuario que va a hacer el commit.
+- En la sección `Ejecutar` seleccionamos `Añadir un nuevo paso` y seleccionamos `Ejecutar linea de comandos (shell)`.
+- En la sección `Comando` ingresamos:
+  - `git branch`
+  - `git checkout main`
+  - `git merge origin/feature/myFeature`
+- En la seccion `Acciones para ejecutar después` seleccionamos `Añadir una opción` y seleccionamos `Git Publisher` nos mostrará una sección.
+- En esa sección marcamos `Push Only If Build Succeeds`.
+- En la sección `Branches` seleccionamso `Add Branch` y en la sección `Branch to push` ingresamos `main` y en la sección `Target remote name` ingresamos `origin`.
+- Presionamos `aplicar` y `guardar`.
+
+Con esto tenemos creado el pipeline de integración continua, que se encarga de clonar el repo, ejecuta las pruebas y si todo va bien hace un merge en la rama principal.
+
+Jenkins nos permite crear pipelines mucho mas complejos que este, con multiples etapas y pasos, tiene un (repositorio de plugins)[https://plugins.jenkins.io/] que nos permite extender mucho su funcionalidad segun nuestras necesidades.
+
+### Integrar Slack con Jenkins para enviar notificaciones y ver reportes de los pipelines
+
+Slack es una plataforma de comunicación empresarial que nos permite integrar Jenkins para mediante notificaciones que nos llegan a un canal de Slack, nos informen del estado de los pipelines. Para esto en nuestro Slack debemos agregar una aplicación de Jenkins. Slack tiene una tienda de aplicaciones con diferentes aplicaciones que podemos integrar con Slack.
+
+- Agregamos la aplicación de Jenkins a Slack.
+- Seleccionamos el canal en el que queremos recibir las notificaciones. Podemos crear un nuevo canal llamado `jenkins`.
+- En el panel de control de Jenkins vamos a la opción `administrar jenkins`.
+- Seleccionamos la opción `administrar plugins`.
+- Buscamos el plugin de Slack, `slack notification` y lo instalamos.
+- Una vez instalado volvemos a la sección `administrar jenkins` y seleccionamos la opción `configurar sistema`.
+- Vamos a la sección `Slack`.
+- En la sección `Workspace` ingresamos el nombre de nuestro workspace de Slack.
+- En la sección `Credential` seleccionamos `Add`.
+- En la sección `Kind` seleccionamos `Secret text`.
+- En la sección `Secret` ingresamos el token de Slack.
+- Presionamos `Add`.
+- Presionamos `aplicar` y `guardar`.
+
+Ahora debemos habilitar las notificaciones de Slack en nuestro pipeline.
+
+- Ingresamos a la sección `configurar` de nuestro pipeline.
+- Vamos a la sección `Acciones para ejecutar después` y seleccionamos `Añadir una opción`.
+- Seleccionamos `Slack Notifications`.
+- Marcamos las opciones que queremos notificar como `Notify Build Start`, `Notify Build Failure`, `Notify Build Unstable`, `Notify Build Success`, `Notify Build Fixed`, `Notify Build Still Failing`. En este caso vamos a notificar en todos los casos.
+- Seleccionamos nuevamente `Añadir una opción` y seleccionamos `Publicar los resultados de test JUnit`.
+- En la sección `Ficheros XML con los informes de test` ingresamos la ruta del archivo de los informes de test, por ejemplo `billing/target/surefire-reports/*.xml`.
+- Presionamos `aplicar` y `guardar`.
+
+Con esto tenemos configurado nuestro pipeline para que nos envie notificaciones a Slack en caso de que ocurra un evento.
