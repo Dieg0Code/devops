@@ -1592,3 +1592,157 @@ git push origin feature/myFeature
 ```
 
 Con este comando enviamos la rama al repositorio remoto. Luego podemos hacer un Merge Request para enviar la rama a la rama de desarrollo (develop). Para hacer un Merge Request necesitamos ir al repositorio en GitHub, GitLab, Bitbucket, etc., y hacer clic en el botón de Merge Request.
+
+## Integración continua con Jenkins
+
+### CI/CD Continuous Integration - Continuous Deployment
+
+#### Integración continua
+
+- Es una de las principales prácticas de DevOps y consiste en automatizar la gestión de los cambios del código de múltiples contribuidores en un único proyecto de software.
+- Permite a los desarrolladores realizar merge frecuentemente en un repositorio central, luego permite que la compilación y pruebas automáticas sean ejecutadas.
+- El sistema de control de versiones es el core de todo el proceso de integración continua y se puede complementar con pruebas de código automático, revision de sintaxis, pruebas de integración, pruebas de rendimiento, etc.
+
+En este escenario de integración continua, tenemos 3 actores principales:
+
+- **Desarrollador**: Es el encargado de escribir el código y subirlo al repositorio.
+- **Repositorio**: Es el lugar donde se almacena el código fuente.
+- **Servidor de Integración Continua**: Es el encargado de ejecutar las pruebas y desplegar la aplicación.
+
+El desarrollador hace un push al repositorio, el servidor de integración continua detecta el cambio, descarga el código, ejecuta las pruebas y despliega la aplicación, puede ejecutar diferentes tipos de pruebas para asegurarse de que el código es correcto, ademas puede enviar notificaciones al desarrollador mediante correo electrónico, Slack, Discord, etc. Para alertar al desarrollador en caso de que algo salga mal. El servidor de integración continua compila el código, ejecuta las pruebas y despliega la aplicación en un entorno de pruebas.
+
+#### Entrega continua
+
+- Es una extensión del proceso de integración continua, dado que despliega todos los cambios de manera automática en el entorno de pruebas y/o producción.
+- Se cuenta con un proceso de despliegue automatizado que se ejecuta después de la fase de construcción o deforma manual con frecuencia predeterminada.
+
+#### Liberación continua
+
+- Va un paso mas allá de la entrega continua en el nivel de automatización.
+- Cuando la aplicación pasa todas las fases anteriores el software es desplegado en producción y entregado al cliente final, no hay intervención humana en el proceso, solo si las pruebas fallan se detendrá el proceso.
+
+Una vez las nuevas características has sido probadas y validadas, se despliegan ya se en producción o en un entorno de pruebas, dependiendo de la configuración del pipeline.
+
+#### Conceptos importantes
+
+- Continuous Integration (CI)
+  - Build
+  - Test
+  - Merge
+- Continuous Delivery (CD)
+  - Automatically release to repository
+- Continuous Deployment
+  - Automatically release to production
+
+- **Pipeline**: Grupo lógico de actividades que de manera conjunta realizan tareas.
+- **Jenkins**: Servidor de automatización de código abierto.
+- **Slack**: Plataforma propietaria de comunicación empresarial (Característica mas relevante channel).
+- **SonarQube**: Plataforma opensource para la inspección continua de la calidad del código, puede ejecutar revisiones automáticas.
+- **Selenium**: Framework para probar aplicaciones web, permite escribir test funcionales de manera sencilla.
+
+## Instalar y configurar Jenkins usando una imagen Docker extendida con Maven
+
+Para descargar la imagen de Jenkins desde Docker Hub podemos ejecutar el siguiente comando:
+
+```bash
+docker pull jenkins/jenkins
+```
+
+Pero nosotros vamos a extender esta imagen con Maven, para esto necesitamos crear un archivo Dockerfile con el siguiente contenido:
+
+```Dockerfile
+FROM jenkins/jenkins
+USER root
+#Define variables
+ENV MAVEN_VERSION 3.9.0
+
+#Update Base OS and install additional tools
+RUN apt-get update && apt-get install -y wget
+RUN  wget --no-verbose https://downloads.apache.org/maven/maven-3/$MAVEN_VERSION/binaries/apache-maven-$MAVEN_VERSION-bin.tar.gz -P /tmp/
+RUN tar xzf /tmp/apache-maven-$MAVEN_VERSION-bin.tar.gz -C /opt/ 
+RUN ln -s  /opt/apache-maven-$MAVEN_VERSION /opt/maven 
+RUN ln -s /opt/maven/bin/mvn /usr/local/bin 
+RUN rm /tmp/apache-maven-$MAVEN_VERSION-bin.tar.gz 
+
+#Set up permissions
+RUN chown jenkins:jenkins /opt/maven;
+ENV MAVEN_HOME=/opt/mvn
+USER jenkins
+```
+
+Con este archivo creamos una imagen de Jenkins al cual le instalamos Maven, le instalamos Maven ya que vamos a usar Jenkins para compilar y desplegar aplicaciones Java.
+
+Para construir la imagen con Maven necesitamos ejecutar el siguiente comando:
+
+```bash
+docker build -t jenkins-cicd --no-cache .
+```
+
+Con este comando construimos la imagen de Jenkins con Maven. Luego podemos ejecutar la imagen con el siguiente comando:
+
+```bash
+docker run -d -p 8080:8080 -p 50000:50000 --name jenkins jenkins-cicd
+```
+
+Con esto creamo un contenedor de Jenkins con Maven. Luego podemos acceder a Jenkins en el navegador con la siguiente URL:
+
+```bash
+http://localhost:8080
+```
+
+Nos va a pedir una contraseña que podemos obtener con el siguiente comando:
+
+```bash
+docker exec jenkins cat /var/jenkins_home/secrets/initialAdminPassword
+```
+
+Con esta contraseña podemos acceder a Jenkins en el navegador, nos va apedir instalar los plugins, podemos instalar los plugins recomendados o seleccionar los plugins que queremos instalar. Luego deberíamos crear un usuario y una contraseña para acceder a Jenkins.
+
+### Diseñar un pipeline
+
+Un pipeline es un conjunto de pasos que se ejecutan de manera secuencial, constan de varias etapas y cada etapa consta de varios pasos.
+
+Por ejemplo, un pipeline sencillo:
+
+- Pull.
+- Build.
+- Install.
+
+Para crear esta pipeline primero debemos tener un proyecto con git conectado a un repositorio como GitHub por ejemplo
+
+Luego debemos ingresar al Dashboar de Jenkins y selccionar la opcion `Create job`, luego en este caso seleccionamos un `freestyle project`, le ponemos un nombre, por ejemplo, `devops_test1` y seleccionamos la opción `OK`.
+
+
+-Source Code Management
+  - Luego en la sección de `Source Code Management` seleccionamos `Git`.
+  - En la sección de `Repository URL` ingresamos la URL del repositorio.
+  - Agregamos las credenciales del repositorio.
+  - Seleccinamos la rama que queremos usar.
+- Build Environment
+  - En la sección de `Build steps` seleccionamos `Invoke top-level Maven targets`.
+    - En la sección de `Goals` ingresamos `clean install`. Con esto limpiamos el proyecto y lo compilamos.
+    - En advanced en la seccion `POM` ingresamos la ruta del archivo `pom.xml`, en este caso `billing/pom.xml`.
+
+Con esto tenemos un pipeline sencillo que se encarga de instalar las dependencias y compilar el proyecto.
+
+Ahora nos deberia aparecer en el dashboard de Jenkins el proyecto que acabamos de crear, podemos ingresar a el y seleccionar la opción `Build Now` para ejecutar el pipeline.
+
+Podemos ingresar a la consola de Jenkins para ver los logs de la ejecución del pipeline en la seccion de `Console Output`.
+
+Con esto se deberia ejecutar el pipeline y compilar el proyecto.
+
+Para comprobar que el proyecto se instalo correctamente podemos ingresar a la consola de Jenkins y ejecutar el siguiente comando:
+
+```bash
+docker exec -it jenkins bin/bash
+```
+
+Con este comando ingresamos a la consola de Jenkins, luego podemos ejecutar el siguiente comando para ver los archivos del proyecto:
+
+```bash
+ls -la /var/jenkins_home/.m2/repository/ruta/proyecto/billing
+```
+
+Y con esto inspeccionamos la carpeta en la que jenkins nos dijo que se instalo el proyecto.
+
+### Automatizar ejecución de pelines mediante eventos webHooks (ngrok, jenkins, git)
