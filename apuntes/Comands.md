@@ -514,3 +514,43 @@ kubectl --namespace default get serviceaccount jenkins -o yaml
 ```sh
 kubectl describe secrets/jenkins-token-rk2mg
 ```
+1- Namespaces: Clusters virtuales en un mismo cluster fisico (separacion logic ade clusters)
+
+  ```bash
+  https://kubernetes.io/docs/concepts/overview/working-with-objects/namespaces/
+  ```
+
+2-verificar namespaces
+
+```bash
+kubectl get namespace
+```
+
+3- Crear el namespace si no existe
+```bash
+kubectl create namespace monitoring
+```
+
+4-Crear role de monitorizacion
+
+   - Referencia Authoriation
+   
+   ```bash
+   https://kubernetes.io/docs/reference/access-authn-authz/rbac/
+   kubectl apply -f moniring-role.yaml
+   ```
+5- Crear fichero de configuracion para externalizar la configuracion de prometheus(independiente del ciclo de vida del contenedor)
+
+```bash
+kubectl apply -f configmap-prometheus.yaml
+```
+6- Crear el contenedor y el servicio de prometheus (el contenedor)
+
+```bash
+kubectl apply -f deployment-prometheus.yaml
+```
+
+7- verificar los pods del namespace  monitoring
+```bash
+kubectl get all --namespace=monitoring
+```

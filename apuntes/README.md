@@ -2215,3 +2215,900 @@ Este archivo de configuración del pipeline se encarga de clonar el repositorio,
 - En la sección `Proyecto a ejecutar` ingresamos el nombre del pipeline que acabamos de crear.
 
 Con esto tenemos un pipeline que se encarga de clonar el repositorio, analizar el código con SonarQube, compilar el proyecto, crear una imagen de Docker y desplegar la aplicación en Kubernetes.
+
+## Monitorización con prometheus y grafana
+
+Prometheus es un sistema open source utilizado para la monitorización de eventos y alertas, creado por SoundCloud en 2012 y mantenido por cloud native computing foundation (Linux fundation). Aporta ventaja en la monitorización de infaestructuras complejas.
+
+Principales caracteristicas:
+
+- Monitorización de infraestructura física.
+- Monitorización de componentes funcionales (servicios).
+- Detectar la raíz de los problemas.
+- Alarmas en tiempo real.
+- Notificaciones via email, Webhook, etc.
+- Dashboards.
+
+Principales componentes de Prometheus:
+
+- **Prometheus Serve**: Core de la aplicación, extracción y almacenamiento de métricas en tiempo real.
+- **Client Library**: Instrumentar el código de aplicaciones.
+- **Push Gateway**: Soporte para Jobs de aplicaciones de vida corta.
+- **Exporters**: Datasources que se ejecutan con cierta frecuencia y permiten la recolección de datos mediante el modelo pull.
+- **Alert Manager**: Administra las alertas, envía notificaciones.
+- **PromQL**: Prometheus query language, utilizado para realizar consultas y construir dashboards usando grafana por ejemplo.
+
+### Grafana
+
+Grafana es una plataforma web opensource de análisis y visualización interactiva, proporciona gráficos, tableros de mando y alertas web al conectarse a una fuente de datos. Sporta multiples datasources (AWS, Prometheus, MySQL, PostgreSQL).
+
+### Prometheus definir rol de autorización para monitorización
+
+Para integrar Prometheus con Kubernetes necesitamos ejecutar las configuraciones necesarias en Kubernetes.
+
+- Creamos un archivo de configuración de Prometheus con el siguiente contenido:
+
+```yaml
+# authorization-prometheus.yaml
+#prometheus use a kubernetes APIs to read availables metrics from an object, 
+#we need a RBAC (Role Based Access Control) policy with read access
+#Role or CluseterRole contains rules that represents a set of permissions.
+#A Role always sets permissions within a particular namespace; when you create a Role, you have to specify the namespace it belongs in.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: prometheus
+rules:
+- apiGroups: [""]
+  resources:
+  - nodes
+  - nodes/proxy
+  - services
+  - endpoints
+  - pods
+  verbs: ["get", "list", "watch"]
+- apiGroups:
+  - extensions
+  resources:
+  - ingresses
+  verbs: ["get", "list", "watch"]
+- nonResourceURLs: ["/metrics"]
+  verbs: ["get"]
+---
+#ClusterRoleBinding to grant permission across a whole cluster to any user of previusly ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: prometheus
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: prometheus
+subjects:
+- kind: ServiceAccount
+  name: default
+  namespace: monitoring
+```
+
+Con esto creamos un rol de autorización para Prometheus en Kubernetes.
+
+- Aplicamos el archivo de configuración con el siguiente comando:
+
+```bash
+kubectl apply -f authorization-prometheus.yaml
+```
+
+También debemos crear un archivo de configuración ConfigMap para Prometheus con el siguiente contenido:
+
+```yaml
+# configmap-prometheus.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-server-conf
+  labels:
+    name: prometheus-server-conf
+  namespace: monitoring
+data:
+  prometheus.rules: |-
+    ##########################################################
+    #If The simple Memory usage by each container is grather than 1 bit
+    ##########################################################
+    groups:    
+    - name: Pod Memory Usage
+      rules:
+      - alert: High Pod Memory
+        expr: sum(container_memory_usage_bytes) > 1
+        for: 1m
+        labels:
+          severity: slack
+        annotations:
+          summary: High Memory Usage
+  prometheus.yml: |-
+    global:
+      scrape_interval: 5s
+      evaluation_interval: 5s
+    rule_files:
+      - /etc/prometheus/prometheus.rules
+    alerting:
+      alertmanagers:
+      - scheme: http
+        static_configs:
+        - targets:
+          #Send alert to the alert service manager endpoint
+          - "alertmanager.monitoring.svc:9093"
+
+    scrape_configs:
+      ##########################################################
+      #The kubelet (The kubelet is the primary "node agent" that runs on each node.) 
+      #only provides information about itself and not the containers. 
+      #To receive information from the container level, we need to use an exporter. 
+      #The cAdvisor is already embedded and only needs a metrics_path
+      ##########################################################
+      - job_name: 'k8-cadvisor'
+
+        scheme: https
+
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+
+        kubernetes_sd_configs:
+        - role: node
+
+        relabel_configs:
+        - action: labelmap
+          regex: __meta_kubernetes_node_label_(.+)
+        - target_label: __address__
+          replacement: kubernetes.default.svc:443
+        - source_labels: [__meta_kubernetes_node_name]
+          regex: (.+)
+          target_label: __metrics_path__
+          replacement: /api/v1/nodes/${1}/proxy/metrics/cadvisor
+      
+      
+      ##########################################################
+      #It gets all the metrics from the API servers
+      ##########################################################
+      - job_name: 'k8-apiservers'
+
+        kubernetes_sd_configs:
+        - role: endpoints
+        scheme: https
+
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+
+        relabel_configs:
+        - source_labels: [__meta_kubernetes_namespace, __meta_kubernetes_service_name, __meta_kubernetes_endpoint_port_name]
+          action: keep
+          regex: default;kubernetes;https
+
+
+      ##########################################################
+      #It collects all the kubernetes node metrics.
+      ##########################################################
+      - job_name: 'k8-nodes'
+
+        scheme: https
+
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+
+        kubernetes_sd_configs:
+        - role: node
+
+        relabel_configs:
+        - action: labelmap
+          regex: __meta_kubernetes_node_label_(.+)
+        - target_label: __address__
+          replacement: kubernetes.default.svc:443
+        - source_labels: [__meta_kubernetes_node_name]
+          regex: (.+)
+          target_label: __metrics_path__
+          replacement: /api/v1/nodes/${1}/proxy/metrics
+
+      ##########################################################
+      #All the pod metrics get discovered if the pod metadata is annotated with prometheus.io/scrape and prometheus.io/port annotations.
+      ##########################################################
+      - job_name: 'k8-pods'
+
+        kubernetes_sd_configs:
+        - role: pod
+
+        relabel_configs:
+        - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+          action: keep
+          regex: true       
+        - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+          action: replace
+          target_label: __metrics_path__
+          regex: (.+)
+        - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+          action: replace
+          regex: ([^:]+)(?::\d+)?;(\d+)
+          replacement: $1:$2
+          target_label: __address__
+        - action: labelmap
+          regex: __meta_kubernetes_pod_label_(.+)
+        - source_labels: [__meta_kubernetes_namespace]
+          action: replace
+          target_label: kubernetes_namespace
+        - source_labels: [__meta_kubernetes_pod_name]
+          action: replace
+          target_label: kubernetes_pod_name                 
+      
+         
+      ##########################################################
+      # All the Service endpoints are scrapped if the service metadata is annotated with prometheus.io/scrape 
+      #and prometheus.io/port annotations. It can be used for black-box monitoring.
+      ##########################################################
+      - job_name: 'k8-service-endpoints'
+
+        kubernetes_sd_configs:
+        - role: endpoints
+
+        relabel_configs:
+        - source_labels: [__meta_kubernetes_service_annotation_prometheus_io_scrape]
+          action: keep
+          regex: true
+        - source_labels: [__meta_kubernetes_service_annotation_prometheus_io_scheme]
+          action: replace
+          target_label: __scheme__
+          regex: (https?)
+        - source_labels: [__meta_kubernetes_service_annotation_prometheus_io_path]
+          action: replace
+          target_label: __metrics_path__
+          regex: (.+)
+        - source_labels: [__address__, __meta_kubernetes_service_annotation_prometheus_io_port]
+          action: replace
+          target_label: __address__
+          regex: ([^:]+)(?::\d+)?;(\d+)
+          replacement: $1:$2
+        - action: labelmap
+          regex: __meta_kubernetes_service_label_(.+)
+        - source_labels: [__meta_kubernetes_namespace]
+          action: replace
+          target_label: kubernetes_namespace
+        - source_labels: [__meta_kubernetes_service_name]
+          action: replace
+          target_label: kubernetes_name
+
+      ##########################################################
+      #link to kube-state-metrics object, defined on deployment-kube-state-metrics.yaml
+      ##########################################################
+      - job_name: 'k8-state-metrics'
+        static_configs:
+          - targets: ['kube-state-metrics.kube-system.svc.cluster.local:8080']
+```
+
+Este archivo define las diferentes variables, reglas, jobs, toda la configuración global de Prometheus.
+
+- Aplicamos el archivo de configuración con el siguiente comando:
+
+```bash
+kubectl apply -f configmap-prometheus.yaml
+```
+
+Por último, también debemos crear un archivo de configuración de despliegue de Prometheus con el siguiente contenido:
+
+```yaml
+# deployment-prometheus.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus-deployment
+  namespace: monitoring
+  labels:
+    app: prometheus-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: prometheus-server
+  template:
+    metadata:
+      labels:
+        app: prometheus-server
+    spec:
+      containers:
+        - name: prometheus
+          image: prom/prometheus
+          args:
+            - "--storage.tsdb.retention.time=12h"
+            - "--config.file=/etc/prometheus/prometheus.yml"
+            - "--storage.tsdb.path=/prometheus/"
+          ports:
+            - containerPort: 9090
+          resources:
+            requests:
+              cpu: 500m
+              memory: 500M
+            limits:
+              cpu: 1
+              memory: 1Gi
+#here we mount prometheus config map as volume on prometheus container on /etc...              
+          volumeMounts:
+            - name: prometheus-config-volume
+              mountPath: /etc/prometheus/
+            - name: prometheus-storage-volume
+              mountPath: /prometheus/
+      volumes:
+        - name: prometheus-config-volume
+          configMap:
+            defaultMode: 420
+            name: prometheus-server-conf
+  
+        - name: prometheus-storage-volume
+          emptyDir: {}
+---
+kind: Service
+apiVersion: v1
+metadata:
+  name: prometheus-service
+  namespace: monitoring
+  labels:
+    app: prometheus-server
+  annotations:
+      prometheus.io/scrape: 'true'
+      prometheus.io/port:   '9090'
+spec:   
+  ports:
+  - name: prometheus-server
+###########################################
+#The port expose the service internally within the cluster and will all incomming request made to this port,
+#to the pods selected buy this service
+#Regarding iana.org Port numbers are assigned in various ways, based on three ranges: System
+#Ports (0-1023), User Ports (1024-49151), and the Dynamic and/or Private
+#Ports (49152-65535)
+###########################################
+    port: 8280
+###########################################
+#The port number that make the service visible outside the cluster
+#Port range available minikube 30000-32767
+###########################################
+    nodePort : 30000 
+###########################################
+#The port on define on the pod that the request gets send to
+###########################################
+    targetPort: 9090
+  #type: LoadBalancer
+  type: NodePort
+  selector:
+   app: prometheus-server
+```
+
+Este archivo define el despliegue del servicio de Prometheus en Kubernetes.
+
+- Aplicamos el archivo de configuración con el siguiente comando:
+
+```bash
+kubectl apply -f deployment-prometheus.yaml
+```
+
+### Configurar el servicio kubec state metrics para obtener métricas de los objetos
+
+Para obtener métricas de los objetos de Kubernetes necesitamos ejecutar las configuraciones necesarias en Kubernetes.
+
+Para esto debemo creara los objetos de autorización, cluster role y deployment de kube state metrics.
+
+- Creamos un archivo de configuración de autorización con el siguiente contenido:
+
+```yaml
+# authorization-ksm.yaml
+#A service account provides an identity for processes that run in a Pod
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  labels:
+    app.kubernetes.io/name: kube-state-metrics
+    app.kubernetes.io/version: v1.8.0
+  name: kube-state-metrics
+  namespace: kube-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  labels:
+    app.kubernetes.io/name: kube-state-metrics
+    app.kubernetes.io/version: v1.8.0
+  name: kube-state-metrics
+#The ClusterRole to bind Subjects to
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kube-state-metrics
+#The Users, Groups, or ServiceAccounts to grant permissions to
+subjects:
+- kind: ServiceAccount
+  name: kube-state-metrics
+  namespace: kube-system
+```
+
+Con esto creamos un rol de autorización para kube state metrics en Kubernetes.
+
+- Aplicamos el archivo de configuración con el siguiente comando:
+
+```bash
+kubectl apply -f authorization-ksm.yaml
+```
+
+- Creamos un archivo de configuración de cluster role con el siguiente contenido:
+
+```yaml
+# cluster-role-ksm.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/name: kube-state-metrics
+    app.kubernetes.io/version: v1.8.0
+  name: kube-state-metrics
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - configmaps
+  - secrets
+  - nodes
+  - pods
+  - services
+  - resourcequotas
+  - replicationcontrollers
+  - limitranges
+  - persistentvolumeclaims
+  - persistentvolumes
+  - namespaces
+  - endpoints
+  verbs:
+  - list
+  - watch
+- apiGroups:
+  - extensions
+  resources:
+  - daemonsets
+  - deployments
+  - replicasets
+  - ingresses
+  verbs:
+  - list
+  - watch
+- apiGroups:
+  - apps
+  resources:
+  - statefulsets
+  - daemonsets
+  - deployments
+  - replicasets
+  verbs:
+  - list
+  - watch
+- apiGroups:
+  - batch
+  resources:
+  - cronjobs
+  - jobs
+  verbs:
+  - list
+  - watch
+- apiGroups:
+  - autoscaling
+  resources:
+  - horizontalpodautoscalers
+  verbs:
+  - list
+  - watch
+- apiGroups:
+  - authentication.k8s.io
+  resources:
+  - tokenreviews
+  verbs:
+  - create
+- apiGroups:
+  - authorization.k8s.io
+  resources:
+  - subjectaccessreviews
+  verbs:
+  - create
+- apiGroups:
+  - policy
+  resources:
+  - poddisruptionbudgets
+  verbs:
+  - list
+  - watch
+- apiGroups:
+  - certificates.k8s.io
+  resources:
+  - certificatesigningrequests
+  verbs:
+  - list
+  - watch
+- apiGroups:
+  - storage.k8s.io
+  resources:
+  - storageclasses
+  - volumeattachments
+  verbs:
+  - list
+  - watch
+- apiGroups:
+  - admissionregistration.k8s.io
+  resources:
+  - mutatingwebhookconfigurations
+  - validatingwebhookconfigurations
+  verbs:
+  - list
+  - watch
+- apiGroups:
+  - networking.k8s.io
+  resources:
+  - networkpolicies
+  verbs:
+  - list
+  - watch
+```
+
+Luego aplicamos el archivo de configuración con el siguiente comando:
+
+```bash
+kubectl apply -f cluster-role-ksm.yaml
+```
+
+- Creamos un archivo de configuración de despliegue de kube state metrics con el siguiente contenido:
+
+```yaml
+# deployment-ksm.yaml
+#It service talks to kubernetes API server to get all details abbout all objects 
+#The kube-state-metrics is an exporter that allows Prometheus to scrape information taht kuberentes has about the resources in your cluster
+#official repository
+#https://github.com/kubernetes/kube-state-metrics
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app.kubernetes.io/name: kube-state-metrics
+    app.kubernetes.io/version: v1.8.0
+  name: kube-state-metrics
+  namespace: kube-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: kube-state-metrics
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: kube-state-metrics
+        app.kubernetes.io/version: v1.8.0
+    spec:
+      containers:
+      - image: bitnami/kube-state-metrics:latest
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+          initialDelaySeconds: 5
+          timeoutSeconds: 5
+        name: kube-state-metrics
+        ports:
+        - containerPort: 8080
+          name: http-metrics
+        - containerPort: 8081
+          name: telemetry
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 8081
+          initialDelaySeconds: 5
+          timeoutSeconds: 5
+      nodeSelector:
+        kubernetes.io/os: linux
+      serviceAccountName: kube-state-metrics
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app.kubernetes.io/name: kube-state-metrics
+    app.kubernetes.io/version: v1.8.0
+  name: kube-state-metrics
+  namespace: kube-system
+spec:
+  clusterIP: None
+  ports:
+  - name: http-metrics
+    port: 8080
+    targetPort: http-metrics
+  - name: telemetry
+    port: 8081
+    targetPort: telemetry
+  selector:
+    app.kubernetes.io/name: kube-state-metrics
+```
+
+### Configurar el servicio Alert Manager para administrar las alertas en prometheus
+
+El servicio Alert Manager es un componente de Prometheus que se encarga de administrar las alertas, silenciarlas, agruparlas y enviar notificaciones.
+
+Para configurar el servicio Alert Manager necesitamos ejecutar las configuraciones necesarias en Kubernetes.
+
+- Creamos un archivo de configuración de autorización con el siguiente contenido:
+
+```yaml
+# pvc-alert-manager.yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: alertmanager
+  namespace: monitoring
+  labels:
+    kubernetes.io/cluster-service: "true"
+    addonmanager.kubernetes.io/mode: EnsureExists
+spec:
+  storageClassName: standard
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: "500Mi"
+```
+
+Con esto creamos un volumen persistente para el servicio Alert Manager en Kubernetes.
+
+- Aplicamos el archivo de configuración con el siguiente comando:
+
+```bash
+kubectl apply -f pvc-alert-manager.yaml
+```
+
+- Creamos un archivo config map para el servicio Alert Manager con el siguiente contenido:
+
+```yaml
+# configmap-alert-manager.yaml
+#configurtion of alert manager
+#https://github.com/prometheus/alertmanager
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alertmanager-conf
+  namespace: monitoring
+data:
+  alertmanager.yml: |-
+    global:
+      resolve_timeout: 5m
+      slack_api_url: 'https://hooks.slack.com/services/cambiar esta linea por el propio webhook de su cuenta en slack'
+  
+    route:
+      group_by: ['alertname', 'priority']
+      group_wait: 30s
+      group_interval: 1m
+      #change to long interval in real production like 3h
+      repeat_interval: 1m
+      # A default receiver
+      receiver: default-receiver
+      routes:
+      - match:
+          severity: slack
+        receiver: default-receiver
+      - match: 
+          severity: warning
+        receiver: default-receiver
+    receivers:
+    - name: default-receiver
+      slack_configs:
+        - send_resolved: true
+          channel: '#prometheus'
+          text: '{{ template "slack.default.text" . }}'
+          title: "{{ range .Alerts }}{{ .Annotations.summary }}\n{{ end }}"
+```
+
+Con esto creamos un archivo de configuración para el servicio Alert Manager en Kubernetes.
+
+- Aplicamos el archivo de configuración con el siguiente comando:
+
+```bash
+kubectl apply -f configmap-alert-manager.yaml
+```
+
+- Creamos un archivo de configuración de despliegue para el servicio Alert Manager con el siguiente contenido:
+
+```yaml
+# deployment-alert-manager.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alertmanager
+  namespace: monitoring
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: alertmanager
+  template:
+    metadata:
+      name: alertmanager
+      labels:
+        app: alertmanager
+    spec:
+      containers:
+      - name: alertmanager
+        image: prom/alertmanager:latest
+        args:
+          - "--config.file=/etc/config/alertmanager.yml"
+          - "--storage.path=/data"
+        ports:
+        - name: alertmanager
+          containerPort: 9093
+        volumeMounts:
+        - name: config-volume
+          mountPath: /etc/config
+        - name: storage-volume
+          mountPath: /data
+        resources:
+          limits:
+            cpu: 10m
+            memory: 50Mi
+          requests:
+            cpu: 10m
+            memory: 50Mi       
+      volumes:
+      - name: config-volume
+        configMap:
+          name: alertmanager-conf     
+      - name: storage-volume
+        persistentVolumeClaim:
+            claimName: alertmanager
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: alertmanager
+  namespace: monitoring
+  annotations:
+      prometheus.io/scrape: 'true'
+      prometheus.io/path:   /
+      prometheus.io/port:   '8080'
+spec:
+  selector: 
+    app: alertmanager
+  type: NodePort  
+  ports:
+    - port: 9093
+      targetPort: 9093
+      nodePort: 31000
+```
+
+Con esto creamos un archivo de configuración para el despliegue del servicio Alert Manager en Kubernetes.
+
+- Aplicamos el archivo de configuración con el siguiente comando:
+
+```bash
+kubectl apply -f deployment-alert-manager.yaml
+```
+Para enviar las notificaciones a Slack debemos primero instalar la aplicación `incoming webhook` en Slack la cual nos proporciona un URL para enviar las notificaciones. Esta URL la pegamos en el archivo `configmap-alert-manager.yaml` en la sección `slack_api_url`, tambien debemos agregar el nombre del canal en la sección `channel` de `receivers`.
+
+### Configurar grafana y montar los dashboards de administración
+
+Grafana es una forma de agregar una interfaz grafica amigable a prometheus, para instalarla debemos hacer algo similar a lo que veniamos haciendo.
+
+Creamos un configmap con el siguiente contenido:
+
+```yaml
+# configmap-grafana.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-datasources
+  namespace: monitoring
+#This data source is fro prometheus, You can add more datasources here adding more .yml files
+data:
+  prometheus.yaml: |-
+    {
+        "apiVersion": 1,
+        "datasources": [
+            {
+               "access":"proxy",
+                "editable": true,
+                "name": "prometheus",
+                "orgId": 1,
+                "type": "prometheus",
+                "url": "http://prometheus-service.monitoring.svc:8280",
+                "version": 1
+            }
+        ]
+    }
+```
+
+Aplicamos el archivo de configuración con el siguiente comando:
+
+```bash
+kubectl apply -f configmap-grafana.yaml
+```
+
+Creamos un archivo de configuración de despliegue para Grafana con el siguiente contenido:
+
+```yaml
+# deployment-grafana.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  namespace: monitoring
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: grafana
+  template:
+    metadata:
+      name: grafana
+      labels:
+        app: grafana
+    spec:
+      containers:
+      - name: grafana
+        image: grafana/grafana:latest
+        ports:
+        - name: grafana
+          containerPort: 3000
+        resources:
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+          requests: 
+            memory: 500M
+            cpu: "500m"
+        volumeMounts:
+          - mountPath: /var/lib/grafana
+            name: grafana-storage
+          - mountPath: /etc/grafana/provisioning/datasources
+            name: grafana-datasources
+            readOnly: false
+      volumes:
+        - name: grafana-storage
+          emptyDir: {}
+        - name: grafana-datasources
+          configMap:
+              defaultMode: 420
+              name: grafana-datasources
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  namespace: monitoring
+  annotations:
+      prometheus.io/scrape: 'true'
+      prometheus.io/port:   '3000'
+spec:
+  selector: 
+    app: grafana
+  type: NodePort  
+  ports:
+    - port: 3000
+      targetPort: 3000
+      nodePort: 32000
+###############################################
+#grafana public templates
+#https://grafana.com/grafana/dashboards?dataSource
+#https://grafana.com/grafana/dashboards/6417
+#https://grafana.com/grafana/dashboards/8588
+###############################################
+```
+
+Con esto creamos un archivo de configuración para el despliegue de Grafana en Kubernetes.
+
+- Aplicamos el archivo de configuración con el siguiente comando:
+
+```bash
+kubectl apply -f deployment-grafana.yaml
+```
+
+Con esto tenemos configurado Prometheus, Alert Manager y Grafana en Kubernetes. Para acceder a grafana podemos hacerlo con la IP de minikube y el puerto que definimos en el archivo de configuración, por ejemplo `http://192.168.49.2:32000`. Por defecto el usuario y la contraseña es `admin`, `admin`.
+
+Ahora debemos configurar que grafana traiga los reportes de Prometheus, para esto debemos importar un dashboard de ejemplo, para esto vamos a la sección `+` y seleccionamos `import`, en la sección `grafana.com dashboard` ingresamos el ID del dashboard que queremos importar, por ejemplo `6417`.
+
+En la sección `prometheus` seleccionamos el data source que creamos anteriormente, en este caso `prometheus`.
